@@ -1,7 +1,8 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+// IMPORT useMap HERE
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; 
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
@@ -30,15 +31,28 @@ const RedPulseIcon = L.divIcon({
 
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// --- ZOOM BUTTON ---
-const RecenterButton = ({ location }) => {
+// --- 1. NEW COMPONENT: AUTO RE-CENTER ---
+// This handles the "Blank Map" issue. It watches your location and moves the camera.
+const AutoRecenter = ({ location }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (location) {
+            // Smoothly fly to the new location when GPS locks
+            map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 2 });
+        }
+    }, [location]); // Run this every time location changes slightly
+    return null;
+};
+
+// --- 2. COMPONENT: MANUAL RE-CENTER BUTTON ---
+const ManualRecenterBtn = ({ location }) => {
     const map = useMap(); 
     const handleZoom = () => {
-        if (location) map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 1.5 });
+        if (location) map.flyTo([location.lat, location.lng], 16, { animate: true });
     };
     return (
         <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '90px', marginRight: '10px', pointerEvents: 'auto', zIndex: 1000 }}>
-             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl transition-all active:scale-95 flex items-center justify-center w-12 h-12">
+             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl flex items-center justify-center w-12 h-12">
                 <Icon icon="mdi:crosshairs-gps" className="text-2xl text-cyan-400" />
             </button>
         </div>
@@ -48,16 +62,14 @@ const RecenterButton = ({ location }) => {
 const Dashboard = () => {
   const navigate = useNavigate();
   
-  // STATE MANAGEMENT
-  const [currentUser, setCurrentUser] = useState(null); // Explicitly track user
+  const [currentUser, setCurrentUser] = useState(null);
   const [location, setLocation] = useState(null);
-  const [alerts, setAlerts] = useState([]); // List of ALL alerts
-  const [isAlerting, setIsAlerting] = useState(false); // Am I alerting?
+  const [alerts, setAlerts] = useState([]);
+  const [isAlerting, setIsAlerting] = useState(false);
   const [notification, setNotification] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. AUTHENTICATION & USER LOCK
-  // We wait for Firebase to tell us EXACTLY who is logged in before doing anything
+  // AUTH
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -70,10 +82,9 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, [navigate]);
 
-  // 2. LOCATION TRACKER
+  // LOCATION
   useEffect(() => {
-    if (!currentUser) return; // Don't track if not logged in
-
+    if (!currentUser) return;
     if (navigator.geolocation) {
         const watchId = navigator.geolocation.watchPosition(
             (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -84,22 +95,17 @@ const Dashboard = () => {
     }
   }, [currentUser]);
 
-  // 3. DATABASE LISTENER (THE ROOT FIX)
-  // We depend on 'currentUser' to ensure we compare against the correct email
+  // DB LISTENER
   useEffect(() => {
     if (!currentUser) return;
 
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
-    
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAlerts(fetchedAlerts);
 
-        // --- THE TRUTH CHECK ---
-        // Look through the DB. Is MY email in there?
+        // Check if I am alerting
         const myActiveAlert = fetchedAlerts.find(a => a.user === currentUser.email);
-        
-        // This sets the UI based ONLY on Database Reality
         setIsAlerting(!!myActiveAlert); 
     });
 
@@ -110,10 +116,10 @@ const Dashboard = () => {
 
   const sendAlert = async () => {
     if (!location) return;
-
-    // NOTE: We do NOT manually set setIsAlerting(true) here anymore.
-    // We trust the DB listener (Effect #3) to do it for us.
     
+    // Optimistic UI: Turn red immediately so user feels response
+    setIsAlerting(true);
+
     try {
         await addDoc(collection(db, "alerts"), {
             user: currentUser.email,
@@ -122,26 +128,16 @@ const Dashboard = () => {
             message: "EMERGENCY SIGNAL",
             createdAt: serverTimestamp()
         });
-        
         setNotification("SIGNAL TRANSMITTED");
         setTimeout(() => setNotification(""), 3000);
-
     } catch (e) {
         console.error(e);
         setNotification("FAILED");
+        setIsAlerting(false); // Revert if failed
     }
   };
 
-  // 4. LOADING SCREEN
-  if (isLoading) {
-    return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center">
-         <div className="text-green-500 font-mono animate-pulse tracking-widest">
-            ESTABLISHING SECURE CONNECTION...
-         </div>
-      </div>
-    );
-  }
+  if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono animate-pulse">CONNECTING...</div>;
 
   return (
     <div className="h-screen w-screen relative bg-black">
@@ -170,12 +166,16 @@ const Dashboard = () => {
       )}
 
       {/* MAP */}
-      <MapContainer center={location ? [location.lat, location.lng] : [0,0]} zoom={13} className="h-full w-full z-0">
+      {/* Note: We initialize center at [0,0] but AutoRecenter will fix it */}
+      <MapContainer center={[0, 0]} zoom={3} className="h-full w-full z-0">
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         
-        <RecenterButton location={location} />
+        {/* --- THIS FIXES THE BLANK MAP --- */}
+        <AutoRecenter location={location} />
+        {/* -------------------------------- */}
 
-        {/* MY LOCATION */}
+        <ManualRecenterBtn location={location} />
+
         {location && (
             <Marker 
                 position={[location.lat, location.lng]} 
@@ -185,10 +185,8 @@ const Dashboard = () => {
             </Marker>
         )}
 
-        {/* OTHER ALERTS */}
         {alerts.map((alert) => (
-             // Only show red markers for OTHERS (my marker is handled above)
-            alert.user !== currentUser.email && (
+            alert.user !== currentUser?.email && (
                 <Marker key={alert.id} position={[alert.lat, alert.lng]}>
                     <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
                 </Marker>
