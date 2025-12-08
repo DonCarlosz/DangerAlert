@@ -1,26 +1,23 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; // <--- Added useMap
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
-import { signOut, onAuthStateChanged } from 'firebase/auth'; // <--- Import listener
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import L from 'leaflet';
 
-// --- 1. DEFAULT BLUE ICON ---
+// --- ICONS (Same as before) ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-import SplashPage from './SplashPage';
 const DefaultIcon = L.icon({
     iconUrl: markerIcon,
     shadowUrl: markerShadow,
     iconSize: [25, 41],
     iconAnchor: [12, 41]
 });
-
-// --- 2. CUSTOM RED BLINKING DOT ICON ---
 const RedPulseIcon = L.divIcon({
     className: "custom-icon",
     html: `<div class="w-6 h-6 bg-red-600 rounded-full border-2 border-white shadow-[0_0_20px_rgba(220,38,38,1)] animate-ping"></div>
@@ -28,8 +25,33 @@ const RedPulseIcon = L.divIcon({
     iconSize: [24, 24],
     iconAnchor: [12, 12] 
 });
-
 L.Marker.prototype.options.icon = DefaultIcon;
+
+// --- NEW COMPONENT: ZOOM BUTTON ---
+// This must be INSIDE <MapContainer> to work
+const RecenterButton = ({ location }) => {
+    const map = useMap(); // Access Leaflet instance
+
+    const handleZoom = () => {
+        if (location) {
+            map.flyTo([location.lat, location.lng], 15, { animate: true });
+        }
+    };
+
+    return (
+        <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '100px', marginRight: '10px', pointerEvents: 'auto' }}>
+            <div className="leaflet-control leaflet-bar">
+                <button 
+                    onClick={handleZoom}
+                    className="bg-white/90 hover:bg-white text-black p-2 rounded shadow-lg flex items-center justify-center w-10 h-10 border-2 border-gray-300"
+                    title="Zoom to my location"
+                >
+                    <Icon icon="mdi:crosshairs-gps" className="text-xl" />
+                </button>
+            </div>
+        </div>
+    );
+};
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -37,27 +59,22 @@ const Dashboard = () => {
   const [alerts, setAlerts] = useState([]);
   const [notification, setNotification] = useState("");
   const [isAlerting, setIsAlerting] = useState(false);
-  
-  // NEW: Loading state prevents the "Kick to Login" bug
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. AUTH CHECK LISTENER
+  // 1. AUTH CHECK
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        navigate('/login');
-      } else {
-        // User is confirmed, we can stop loading
-        setIsLoading(false);
-      }
+      if (!user) navigate('/login');
+      else setIsLoading(false);
     });
     return () => unsubscribeAuth();
   }, [navigate]);
 
-  // 2. DATA & LOCATION (Only runs after Auth is done)
+  // 2. DATA & LOCATION
   useEffect(() => {
-    if (isLoading) return; // Wait for auth
+    if (isLoading) return;
 
+    // Get Location
     if (navigator.geolocation) {
         navigator.geolocation.watchPosition(
             (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -66,9 +83,24 @@ const Dashboard = () => {
         );
     }
 
+    // DB Listener
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
     const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-        setAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const liveAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAlerts(liveAlerts);
+
+        // --- PERSISTENCE FIX ---
+        // Check if *I* have an active alert in the database
+        const myEmail = auth.currentUser?.email;
+        const myActiveAlert = liveAlerts.find(a => a.user === myEmail);
+        
+        if (myActiveAlert) {
+            // If the DB says I am alerting, force the red dot
+            setIsAlerting(true);
+        } else {
+            // Otherwise, I am safe
+            setIsAlerting(false);
+        }
     });
 
     return () => unsubscribeSnapshot();
@@ -78,10 +110,7 @@ const Dashboard = () => {
 
   const sendAlert = async () => {
     if (!location) return;
-    
-    // Visual Feedback
-    setIsAlerting(true);
-
+    setIsAlerting(true); // Immediate visual feedback
     try {
         await addDoc(collection(db, "alerts"), {
             user: auth.currentUser.email,
@@ -90,10 +119,8 @@ const Dashboard = () => {
             message: "EMERGENCY SIGNAL",
             createdAt: serverTimestamp()
         });
-        
         setNotification("SIGNAL TRANSMITTED");
         setTimeout(() => setNotification(""), 3000);
-
     } catch (e) {
         console.error(e);
         setNotification("FAILED");
@@ -101,16 +128,8 @@ const Dashboard = () => {
     }
   };
 
-  // 3. LOADING SCREEN (Prevents flashing)
-  if (isLoading) {
-    return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center">
-         <SplashPage/>
-      </div>
-    );
-  }
+  if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono animate-pulse">CONNECTING...</div>;
 
-  // 4. MAIN DASHBOARD
   return (
     <div className="h-screen w-screen relative bg-black">
       
@@ -141,25 +160,31 @@ const Dashboard = () => {
       <MapContainer center={location ? [location.lat, location.lng] : [51.505, -0.09]} zoom={13} className="h-full w-full z-0">
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         
+        {/* NEW: Zoom Button Component */}
+        <RecenterButton location={location} />
+
+        {/* MY LOCATION */}
         {location && (
             <Marker 
                 position={[location.lat, location.lng]} 
                 icon={isAlerting ? RedPulseIcon : DefaultIcon} 
             >
-                <Popup>
-                    {isAlerting ? "SIGNAL ACTIVE!" : "You are here"}
-                </Popup>
+                <Popup>{isAlerting ? "SIGNAL ACTIVE!" : "You are here"}</Popup>
             </Marker>
         )}
 
+        {/* OTHER ALERTS (Filtered to avoid showing myself twice if you prefer) */}
         {alerts.map((alert) => (
-            <Marker key={alert.id} position={[alert.lat, alert.lng]}>
-                <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
-            </Marker>
+            // Only show alert markers for OTHER people, since "My Location" handles my red dot
+            alert.user !== auth.currentUser?.email && (
+                <Marker key={alert.id} position={[alert.lat, alert.lng]}>
+                    <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
+                </Marker>
+            )
         ))}
       </MapContainer>
 
-      {/* BUTTON */}
+      {/* ALERT BUTTON */}
       <div className="absolute bottom-10 left-0 right-0 flex justify-center z-[1000]">
         <button onClick={sendAlert} className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-red-800 border-red-900 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}>
             <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />
