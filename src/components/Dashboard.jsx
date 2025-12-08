@@ -12,6 +12,7 @@ import L from 'leaflet';
 // --- 1. DEFAULT BLUE ICON ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import SplashPage from './SplashPage';
 const DefaultIcon = L.icon({
     iconUrl: markerIcon,
     shadowUrl: markerShadow,
@@ -104,9 +105,7 @@ const Dashboard = () => {
   if (isLoading) {
     return (
       <div className="h-screen w-screen bg-black flex items-center justify-center">
-         <div className="text-green-500 font-mono animate-pulse tracking-widest">
-            VERIFYING ENCRYPTION KEYS...
-         </div>
+         <SplashPage/>
       </div>
     );
   }
