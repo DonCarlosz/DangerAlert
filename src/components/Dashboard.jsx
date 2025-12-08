@@ -1,7 +1,7 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; // <--- Added useMap
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
@@ -9,15 +9,17 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import L from 'leaflet';
 
-// --- ICONS (Same as before) ---
+// --- ICONS ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
 const DefaultIcon = L.icon({
     iconUrl: markerIcon,
     shadowUrl: markerShadow,
     iconSize: [25, 41],
     iconAnchor: [12, 41]
 });
+
 const RedPulseIcon = L.divIcon({
     className: "custom-icon",
     html: `<div class="w-6 h-6 bg-red-600 rounded-full border-2 border-white shadow-[0_0_20px_rgba(220,38,38,1)] animate-ping"></div>
@@ -25,110 +27,121 @@ const RedPulseIcon = L.divIcon({
     iconSize: [24, 24],
     iconAnchor: [12, 12] 
 });
+
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// --- NEW COMPONENT: ZOOM BUTTON ---
-// This must be INSIDE <MapContainer> to work
+// --- ZOOM BUTTON ---
 const RecenterButton = ({ location }) => {
-    const map = useMap(); // Access Leaflet instance
-
+    const map = useMap(); 
     const handleZoom = () => {
-        if (location) {
-            map.flyTo([location.lat, location.lng], 15, { animate: true });
-        }
+        if (location) map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 1.5 });
     };
-
     return (
-        <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '100px', marginRight: '10px', pointerEvents: 'auto' }}>
-            <div className="leaflet-control leaflet-bar">
-                <button 
-                    onClick={handleZoom}
-                    className="bg-white/90 hover:bg-white text-black p-2 rounded shadow-lg flex items-center justify-center w-10 h-10 border-2 border-gray-300"
-                    title="Zoom to my location"
-                >
-                    <Icon icon="mdi:crosshairs-gps" className="text-xl" />
-                </button>
-            </div>
+        <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '90px', marginRight: '10px', pointerEvents: 'auto', zIndex: 1000 }}>
+             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl transition-all active:scale-95 flex items-center justify-center w-12 h-12">
+                <Icon icon="mdi:crosshairs-gps" className="text-2xl text-cyan-400" />
+            </button>
         </div>
     );
 };
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  
+  // STATE MANAGEMENT
+  const [currentUser, setCurrentUser] = useState(null); // Explicitly track user
   const [location, setLocation] = useState(null);
-  const [alerts, setAlerts] = useState([]);
+  const [alerts, setAlerts] = useState([]); // List of ALL alerts
+  const [isAlerting, setIsAlerting] = useState(false); // Am I alerting?
   const [notification, setNotification] = useState("");
-  const [isAlerting, setIsAlerting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. AUTH CHECK
+  // 1. AUTHENTICATION & USER LOCK
+  // We wait for Firebase to tell us EXACTLY who is logged in before doing anything
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) navigate('/login');
-      else setIsLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUser(user);
+        setIsLoading(false);
+      } else {
+        navigate('/login');
+      }
     });
-    return () => unsubscribeAuth();
+    return () => unsubscribe();
   }, [navigate]);
 
-  // 2. DATA & LOCATION
+  // 2. LOCATION TRACKER
   useEffect(() => {
-    if (isLoading) return;
+    if (!currentUser) return; // Don't track if not logged in
 
-    // Get Location
     if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(
+        const watchId = navigator.geolocation.watchPosition(
             (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
             (err) => console.error(err),
             { enableHighAccuracy: true }
         );
+        return () => navigator.geolocation.clearWatch(watchId);
     }
+  }, [currentUser]);
 
-    // DB Listener
+  // 3. DATABASE LISTENER (THE ROOT FIX)
+  // We depend on 'currentUser' to ensure we compare against the correct email
+  useEffect(() => {
+    if (!currentUser) return;
+
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
-    const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-        const liveAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setAlerts(liveAlerts);
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAlerts(fetchedAlerts);
 
-        // --- PERSISTENCE FIX ---
-        // Check if *I* have an active alert in the database
-        const myEmail = auth.currentUser?.email;
-        const myActiveAlert = liveAlerts.find(a => a.user === myEmail);
+        // --- THE TRUTH CHECK ---
+        // Look through the DB. Is MY email in there?
+        const myActiveAlert = fetchedAlerts.find(a => a.user === currentUser.email);
         
-        if (myActiveAlert) {
-            // If the DB says I am alerting, force the red dot
-            setIsAlerting(true);
-        } else {
-            // Otherwise, I am safe
-            setIsAlerting(false);
-        }
+        // This sets the UI based ONLY on Database Reality
+        setIsAlerting(!!myActiveAlert); 
     });
 
-    return () => unsubscribeSnapshot();
-  }, [isLoading]);
+    return () => unsubscribe();
+  }, [currentUser]);
 
   const handleLogout = async () => { await signOut(auth); navigate('/login'); };
 
   const sendAlert = async () => {
     if (!location) return;
-    setIsAlerting(true); // Immediate visual feedback
+
+    // NOTE: We do NOT manually set setIsAlerting(true) here anymore.
+    // We trust the DB listener (Effect #3) to do it for us.
+    
     try {
         await addDoc(collection(db, "alerts"), {
-            user: auth.currentUser.email,
+            user: currentUser.email,
             lat: location.lat,
             lng: location.lng,
             message: "EMERGENCY SIGNAL",
             createdAt: serverTimestamp()
         });
+        
         setNotification("SIGNAL TRANSMITTED");
         setTimeout(() => setNotification(""), 3000);
+
     } catch (e) {
         console.error(e);
         setNotification("FAILED");
-        setIsAlerting(false);
     }
   };
 
-  if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono animate-pulse">CONNECTING...</div>;
+  // 4. LOADING SCREEN
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen bg-black flex items-center justify-center">
+         <div className="text-green-500 font-mono animate-pulse tracking-widest">
+            ESTABLISHING SECURE CONNECTION...
+         </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen relative bg-black">
@@ -157,10 +170,9 @@ const Dashboard = () => {
       )}
 
       {/* MAP */}
-      <MapContainer center={location ? [location.lat, location.lng] : [51.505, -0.09]} zoom={13} className="h-full w-full z-0">
+      <MapContainer center={location ? [location.lat, location.lng] : [0,0]} zoom={13} className="h-full w-full z-0">
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         
-        {/* NEW: Zoom Button Component */}
         <RecenterButton location={location} />
 
         {/* MY LOCATION */}
@@ -173,10 +185,10 @@ const Dashboard = () => {
             </Marker>
         )}
 
-        {/* OTHER ALERTS (Filtered to avoid showing myself twice if you prefer) */}
+        {/* OTHER ALERTS */}
         {alerts.map((alert) => (
-            // Only show alert markers for OTHER people, since "My Location" handles my red dot
-            alert.user !== auth.currentUser?.email && (
+             // Only show red markers for OTHERS (my marker is handled above)
+            alert.user !== currentUser.email && (
                 <Marker key={alert.id} position={[alert.lat, alert.lng]}>
                     <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
                 </Marker>
@@ -184,7 +196,7 @@ const Dashboard = () => {
         ))}
       </MapContainer>
 
-      {/* ALERT BUTTON */}
+      {/* BUTTON */}
       <div className="absolute bottom-10 left-0 right-0 flex justify-center z-[1000]">
         <button onClick={sendAlert} className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-red-800 border-red-900 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}>
             <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />
