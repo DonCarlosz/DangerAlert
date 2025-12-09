@@ -6,8 +6,8 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc } from 'firebase/firestore';
 
 // Sub-Components
-import LogoutModal from './dashboard/LogoutModal';
-import MapLayer from './dashboard/MapLayer';
+import LogoutModal from './LogoutModal';
+import MapLayer from './MapLayer';
 
 const Dashboard = () => {
   const navigate = useNavigate();
