@@ -1,13 +1,12 @@
 // src/components/Dashboard.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-// IMPORT useMap HERE
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; 
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where } from 'firebase/firestore';
 import L from 'leaflet';
 
 // --- ICONS ---
@@ -31,20 +30,28 @@ const RedPulseIcon = L.divIcon({
 
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// --- 1. NEW COMPONENT: AUTO RE-CENTER ---
-// This handles the "Blank Map" issue. It watches your location and moves the camera.
+// --- CONFIG: NIGERIA BOUNDARIES ---
+const NIGERIA_BOUNDS = [
+    [4.0, 2.5],   // Bottom-Left (near Lagos/Ocean)
+    [14.0, 15.0]  // Top-Right (near Lake Chad)
+];
+
+// --- COMPONENT: AUTO RE-CENTER (FIXED) ---
+// Now uses a ref to ensure it ONLY runs once on load, allowing scrolling afterwards.
 const AutoRecenter = ({ location }) => {
     const map = useMap();
+    const hasCentered = useRef(false); // Track if we have already centered
+
     useEffect(() => {
-        if (location) {
-            // Smoothly fly to the new location when GPS locks
-            map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 2 });
+        if (location && !hasCentered.current) {
+            map.flyTo([location.lat, location.lng], 15, { animate: true, duration: 2 });
+            hasCentered.current = true; // Lock it so it doesn't run again
         }
-    }, [location]); // Run this every time location changes slightly
+    }, [location, map]);
     return null;
 };
 
-// --- 2. COMPONENT: MANUAL RE-CENTER BUTTON ---
+// --- COMPONENT: MANUAL RE-CENTER BUTTON ---
 const ManualRecenterBtn = ({ location }) => {
     const map = useMap(); 
     const handleZoom = () => {
@@ -52,7 +59,7 @@ const ManualRecenterBtn = ({ location }) => {
     };
     return (
         <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '90px', marginRight: '10px', pointerEvents: 'auto', zIndex: 1000 }}>
-             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl flex items-center justify-center w-12 h-12">
+             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl flex items-center justify-center w-12 h-12 active:scale-95 transition-transform">
                 <Icon icon="mdi:crosshairs-gps" className="text-2xl text-cyan-400" />
             </button>
         </div>
@@ -104,8 +111,10 @@ const Dashboard = () => {
         const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAlerts(fetchedAlerts);
 
-        // Check if I am alerting
-        const myActiveAlert = fetchedAlerts.find(a => a.user === currentUser.email);
+        // Check if I am alerting (Case insensitive check is safer)
+        const myActiveAlert = fetchedAlerts.find(a => 
+            a.user && a.user.toLowerCase() === currentUser.email.toLowerCase()
+        );
         setIsAlerting(!!myActiveAlert); 
     });
 
@@ -114,26 +123,48 @@ const Dashboard = () => {
 
   const handleLogout = async () => { await signOut(auth); navigate('/login'); };
 
-  const sendAlert = async () => {
+  // --- TOGGLE ALERT LOGIC ---
+  const toggleAlert = async () => {
     if (!location) return;
-    
-    // Optimistic UI: Turn red immediately so user feels response
-    setIsAlerting(true);
 
-    try {
-        await addDoc(collection(db, "alerts"), {
-            user: currentUser.email,
-            lat: location.lat,
-            lng: location.lng,
-            message: "EMERGENCY SIGNAL",
-            createdAt: serverTimestamp()
-        });
-        setNotification("SIGNAL TRANSMITTED");
-        setTimeout(() => setNotification(""), 3000);
-    } catch (e) {
-        console.error(e);
-        setNotification("FAILED");
-        setIsAlerting(false); // Revert if failed
+    if (isAlerting) {
+        // --- CASE 1: STOP ALERTING (Delete my doc) ---
+        try {
+            // Find my alert document(s)
+            const q = query(collection(db, "alerts"), where("user", "==", currentUser.email));
+            const querySnapshot = await getDocs(q);
+            
+            // Delete them all
+            querySnapshot.forEach(async (docSnap) => {
+                await deleteDoc(doc(db, "alerts", docSnap.id));
+            });
+
+            setNotification("ALERT CANCELLED");
+            setTimeout(() => setNotification(""), 3000);
+            
+            // NOTE: The listener will automatically set isAlerting to false
+
+        } catch (e) {
+            console.error("Error cancelling:", e);
+            setNotification("ERROR CANCELLING");
+        }
+
+    } else {
+        // --- CASE 2: START ALERTING (Create doc) ---
+        try {
+            await addDoc(collection(db, "alerts"), {
+                user: currentUser.email,
+                lat: location.lat,
+                lng: location.lng,
+                message: "EMERGENCY SIGNAL",
+                createdAt: serverTimestamp()
+            });
+            setNotification("SIGNAL TRANSMITTED");
+            setTimeout(() => setNotification(""), 3000);
+        } catch (e) {
+            console.error(e);
+            setNotification("FAILED");
+        }
     }
   };
 
@@ -158,24 +189,30 @@ const Dashboard = () => {
       {/* NOTIFICATION */}
       {notification && (
         <div className="absolute top-24 left-1/2 transform -translate-x-1/2 z-[2000] w-full max-w-sm px-4 text-center">
-            <div className="bg-green-600/90 backdrop-blur-md text-white px-6 py-3 rounded-full font-mono font-bold border border-green-400 shadow-lg flex items-center justify-center gap-3 animate-pulse">
-            <Icon icon="mdi:check-circle" />
+            <div className={`backdrop-blur-md text-white px-6 py-3 rounded-full font-mono font-bold border shadow-lg flex items-center justify-center gap-3 animate-pulse ${notification.includes("CANCEL") ? "bg-gray-600/90 border-gray-400" : "bg-green-600/90 border-green-400"}`}>
+            <Icon icon={notification.includes("CANCEL") ? "mdi:cancel" : "mdi:check-circle"} />
             <span className="text-sm">{notification}</span>
             </div>
         </div>
       )}
 
       {/* MAP */}
-      {/* Note: We initialize center at [0,0] but AutoRecenter will fix it */}
-      <MapContainer center={[0, 0]} zoom={3} className="h-full w-full z-0">
+      <MapContainer 
+        center={[9.0820, 8.6753]} // Start center (Nigeria)
+        zoom={6} 
+        minZoom={5} // Prevent zooming out to world view
+        maxBounds={NIGERIA_BOUNDS} // Lock to Nigeria
+        maxBoundsViscosity={1.0}
+        className="h-full w-full z-0"
+      >
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         
-        {/* --- THIS FIXES THE BLANK MAP --- */}
+        {/* Fix: AutoRecenter only runs once now */}
         <AutoRecenter location={location} />
-        {/* -------------------------------- */}
-
+        
         <ManualRecenterBtn location={location} />
 
+        {/* MY LOCATION */}
         {location && (
             <Marker 
                 position={[location.lat, location.lng]} 
@@ -185,19 +222,36 @@ const Dashboard = () => {
             </Marker>
         )}
 
+        {/* OTHER ALERTS */}
         {alerts.map((alert) => (
             alert.user !== currentUser?.email && (
-                <Marker key={alert.id} position={[alert.lat, alert.lng]}>
+                <Marker 
+                    key={alert.id} 
+                    position={[alert.lat, alert.lng]}
+                    // FIX: Explicitly use the Red Icon for other alerts
+                    icon={RedPulseIcon} 
+                >
                     <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
                 </Marker>
             )
         ))}
       </MapContainer>
 
-      {/* BUTTON */}
+      {/* TOGGLE BUTTON */}
       <div className="absolute bottom-10 left-0 right-0 flex justify-center z-[1000]">
-        <button onClick={sendAlert} className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-red-800 border-red-900 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}>
-            <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />
+        <button 
+            onClick={toggleAlert} 
+            className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-white border-gray-300 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}
+        >
+            {isAlerting ? (
+                // Stop Icon when alerting
+                <Icon icon="mdi:stop" className="text-4xl text-red-600 relative z-10" />
+            ) : (
+                // Bell Icon when safe
+                <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />
+            )}
+            
+            {/* Ping animation only when alerting */}
             {isAlerting && <div className="absolute inset-0 rounded-full animate-ping border-2 border-red-500"></div>}
         </button>
       </div>
