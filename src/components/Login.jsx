@@ -1,9 +1,10 @@
 // src/components/Login.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // Added useEffect
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '@iconify/react';
 import { auth } from '../firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+// Added onAuthStateChanged below
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, onAuthStateChanged } from 'firebase/auth';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -12,6 +13,18 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // --- NEW: REVERSE AUTH CHECK ---
+  // If user is already logged in, force them to Dashboard immediately
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // "replace: true" prevents the Back button from returning here
+        navigate('/dashboard', { replace: true }); 
+      }
+    });
+    return () => unsubscribe();
+  }, [navigate]);
+
   const handleAuth = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -19,14 +32,14 @@ const Login = () => {
 
     try {
       if (isRegistering) {
-        // Register Logic
         const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
         await updateProfile(userCredential.user, { displayName: formData.displayName });
       } else {
-        // Login Logic
         await signInWithEmailAndPassword(auth, formData.email, formData.password);
       }
-      navigate('/dashboard');
+      // Note: The useEffect above will handle the redirect, 
+      // but we keep this here for immediate feedback after button click
+      navigate('/dashboard', { replace: true }); 
     } catch (err) {
       setError("ACCESS_DENIED :: " + err.code.replace('auth/', '').toUpperCase());
     } finally {
@@ -38,17 +51,15 @@ const Login = () => {
     <div className="min-h-screen w-screen bg-black flex items-center justify-center relative overflow-hidden">
       
       {/* --- BACKGROUND FX --- */}
-      {/* Grid Pattern */}
       <div className="absolute inset-0 z-0 opacity-20" 
            style={{ backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
       </div>
-      {/* Moving Scanline (Red) */}
       <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-red-900/20 to-transparent animate-scan pointer-events-none"></div>
       
       {/* --- MAIN INTERFACE CARD --- */}
       <div className="z-10 w-full max-w-md relative group">
         
-        {/* Decorative Corner Brackets (Red) */}
+        {/* Decorative Corner Brackets */}
         <div className="absolute -top-2 -left-2 w-8 h-8 border-t-2 border-l-2 border-red-600 transition-all group-hover:w-16 group-hover:h-16"></div>
         <div className="absolute -top-2 -right-2 w-8 h-8 border-t-2 border-r-2 border-red-600 transition-all group-hover:w-16 group-hover:h-16"></div>
         <div className="absolute -bottom-2 -left-2 w-8 h-8 border-b-2 border-l-2 border-red-600 transition-all group-hover:w-16 group-hover:h-16"></div>
@@ -59,7 +70,6 @@ const Login = () => {
             
             {/* Header */}
             <div className="flex flex-col items-center mb-8">
-                {/* Icon Container (Red) */}
                 <div className="w-16 h-16 bg-red-900/30 rounded-full flex items-center justify-center border border-red-500/50 mb-4 animate-pulse">
                     <Icon icon="mdi:radar" className="text-3xl text-red-500" />
                 </div>
@@ -71,7 +81,7 @@ const Login = () => {
                 </p>
             </div>
 
-            {/* TABS (Login / Register Toggle) - Red Active State */}
+            {/* TABS */}
             <div className="flex border-b border-white/10 mb-6">
                 <button 
                     type="button"
@@ -100,7 +110,6 @@ const Login = () => {
             {/* FORM */}
             <form onSubmit={handleAuth} className="space-y-5">
                 
-                {/* Display Name (Register Only) */}
                 {isRegistering && (
                     <div className="relative group/input animate-in fade-in slide-in-from-left-4 duration-300">
                         <Icon icon="mdi:badge-account-outline" className="absolute left-3 top-3.5 text-gray-500 group-focus-within/input:text-red-500 transition-colors" />
@@ -114,7 +123,6 @@ const Login = () => {
                     </div>
                 )}
 
-                {/* Email */}
                 <div className="relative group/input">
                     <Icon icon="mdi:email-outline" className="absolute left-3 top-3.5 text-gray-500 group-focus-within/input:text-red-500 transition-colors" />
                     <input 
@@ -126,7 +134,6 @@ const Login = () => {
                     />
                 </div>
 
-                {/* Password */}
                 <div className="relative group/input">
                     <Icon icon="mdi:lock-outline" className="absolute left-3 top-3.5 text-gray-500 group-focus-within/input:text-red-500 transition-colors" />
                     <input 
@@ -138,7 +145,6 @@ const Login = () => {
                     />
                 </div>
 
-                {/* Submit Button (Red Gradients & Shadows) */}
                 <button 
                     type="submit" 
                     disabled={loading}
