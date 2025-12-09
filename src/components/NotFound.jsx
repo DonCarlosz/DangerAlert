@@ -3,7 +3,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '@iconify/react';
 
-const NotFound = () => {
+const Notfound = () => {
   const navigate = useNavigate();
 
   return (
@@ -54,4 +54,4 @@ const NotFound = () => {
   );
 };
 
-export default NotFound;
+export default Notfound;
