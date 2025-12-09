@@ -9,7 +9,8 @@ import SplashPage from './components/SplashPage';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Crash from './components/Crash';
-import ProtectedRoute from './components/ProtectedRoute';
+import ProtectedRoutes from './components/ProtectedRoutes';
+
 
 const App = () => {
   // We need a global auth check for the "Public" routes (Splash/Login)
@@ -43,9 +44,9 @@ const App = () => {
       <Route 
         path="/dashboard" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoutes>
             <Dashboard />
-          </ProtectedRoute>
+          </ProtectedRoutes>
         } 
       />
 
