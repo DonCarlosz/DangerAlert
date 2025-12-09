@@ -1,12 +1,12 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; 
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'; 
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc } from 'firebase/firestore';
 import L from 'leaflet';
 
 // --- ICONS ---
@@ -32,35 +32,43 @@ L.Marker.prototype.options.icon = DefaultIcon;
 
 // --- CONFIG: NIGERIA BOUNDARIES ---
 const NIGERIA_BOUNDS = [
-    [4.0, 2.5],   // Bottom-Left (near Lagos/Ocean)
-    [14.0, 15.0]  // Top-Right (near Lake Chad)
+    [4.0, 2.5],   // Bottom-Left
+    [14.0, 15.0]  // Top-Right
 ];
 
-// --- COMPONENT: AUTO RE-CENTER (FIXED) ---
-// Now uses a ref to ensure it ONLY runs once on load, allowing scrolling afterwards.
-const AutoRecenter = ({ location }) => {
+// --- COMPONENT: MAP CONTROLLER ---
+// Handles Auto-centering and Map Dragging detection
+const MapController = ({ location, isLocked, setIsLocked }) => {
     const map = useMap();
-    const hasCentered = useRef(false); // Track if we have already centered
-
-    useEffect(() => {
-        if (location && !hasCentered.current) {
-            map.flyTo([location.lat, location.lng], 15, { animate: true, duration: 2 });
-            hasCentered.current = true; // Lock it so it doesn't run again
+    
+    // 1. Listen for user dragging the map
+    useMapEvents({
+        dragstart: () => {
+            // If user drags, disable auto-lock
+            setIsLocked(false);
         }
-    }, [location, map]);
+    });
+
+    // 2. Auto-Pan to user if "Locked" is true
+    useEffect(() => {
+        if (location && isLocked) {
+            map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 1.5 });
+        }
+    }, [location, isLocked, map]);
+
     return null;
 };
 
 // --- COMPONENT: MANUAL RE-CENTER BUTTON ---
-const ManualRecenterBtn = ({ location }) => {
-    const map = useMap(); 
-    const handleZoom = () => {
-        if (location) map.flyTo([location.lat, location.lng], 16, { animate: true });
-    };
+const ManualRecenterBtn = ({ isLocked, setIsLocked }) => {
     return (
         <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '90px', marginRight: '10px', pointerEvents: 'auto', zIndex: 1000 }}>
-             <button onClick={handleZoom} className="bg-gray-900/80 hover:bg-black text-white p-2 rounded-lg border border-white/20 shadow-xl flex items-center justify-center w-12 h-12 active:scale-95 transition-transform">
-                <Icon icon="mdi:crosshairs-gps" className="text-2xl text-cyan-400" />
+             <button 
+                onClick={() => setIsLocked(!isLocked)} 
+                className={`p-2 rounded-lg border shadow-xl flex items-center justify-center w-12 h-12 transition-all ${isLocked ? 'bg-cyan-600 border-cyan-400 text-white' : 'bg-gray-900/80 border-white/20 text-gray-400 hover:text-white'}`}
+            >
+                {/* Icon changes based on state */}
+                <Icon icon={isLocked ? "mdi:gps-fixed" : "mdi:gps-not-fixed"} className="text-2xl" />
             </button>
         </div>
     );
@@ -73,8 +81,12 @@ const Dashboard = () => {
   const [location, setLocation] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [isAlerting, setIsAlerting] = useState(false);
+  const [alertDocId, setAlertDocId] = useState(null); // Keep track of MY specific alert ID
   const [notification, setNotification] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  
+  // NEW: Track if map should follow user
+  const [isMapLocked, setIsMapLocked] = useState(true);
 
   // AUTH
   useEffect(() => {
@@ -89,18 +101,31 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, [navigate]);
 
-  // LOCATION
+  // LOCATION TRACKER (The "GPS Engine")
   useEffect(() => {
     if (!currentUser) return;
     if (navigator.geolocation) {
         const watchId = navigator.geolocation.watchPosition(
-            (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            (pos) => {
+                const newLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                setLocation(newLocation);
+
+                // --- LIVE TRACKING LOGIC ---
+                // If I am currently alerting, UPDATE the database with my new move
+                if (isAlerting && alertDocId) {
+                   const docRef = doc(db, "alerts", alertDocId);
+                   updateDoc(docRef, { 
+                       lat: newLocation.lat, 
+                       lng: newLocation.lng 
+                   }).catch(e => console.error("Error updating position", e));
+                }
+            },
             (err) => console.error(err),
             { enableHighAccuracy: true }
         );
         return () => navigator.geolocation.clearWatch(watchId);
     }
-  }, [currentUser]);
+  }, [currentUser, isAlerting, alertDocId]); // Re-run if alert status changes
 
   // DB LISTENER
   useEffect(() => {
@@ -111,11 +136,18 @@ const Dashboard = () => {
         const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAlerts(fetchedAlerts);
 
-        // Check if I am alerting (Case insensitive check is safer)
+        // Check if I am alerting
         const myActiveAlert = fetchedAlerts.find(a => 
             a.user && a.user.toLowerCase() === currentUser.email.toLowerCase()
         );
-        setIsAlerting(!!myActiveAlert); 
+        
+        if (myActiveAlert) {
+            setIsAlerting(true);
+            setAlertDocId(myActiveAlert.id); // Save the ID so we can update it later
+        } else {
+            setIsAlerting(false);
+            setAlertDocId(null);
+        }
     });
 
     return () => unsubscribe();
@@ -128,37 +160,35 @@ const Dashboard = () => {
     if (!location) return;
 
     if (isAlerting) {
-        // --- CASE 1: STOP ALERTING (Delete my doc) ---
+        // --- STOP ALERTING (Delete doc) ---
         try {
-            // Find my alert document(s)
-            const q = query(collection(db, "alerts"), where("user", "==", currentUser.email));
-            const querySnapshot = await getDocs(q);
-            
-            // Delete them all
-            querySnapshot.forEach(async (docSnap) => {
-                await deleteDoc(doc(db, "alerts", docSnap.id));
-            });
-
-            setNotification("ALERT CANCELLED");
-            setTimeout(() => setNotification(""), 3000);
-            
-            // NOTE: The listener will automatically set isAlerting to false
-
+            if (alertDocId) {
+                await deleteDoc(doc(db, "alerts", alertDocId));
+                setNotification("ALERT CANCELLED");
+                setTimeout(() => setNotification(""), 3000);
+            }
         } catch (e) {
             console.error("Error cancelling:", e);
-            setNotification("ERROR CANCELLING");
         }
 
     } else {
-        // --- CASE 2: START ALERTING (Create doc) ---
+        // --- START ALERTING (Create doc) ---
         try {
-            await addDoc(collection(db, "alerts"), {
+            // First, double check to delete any old stale alerts from me
+            const q = query(collection(db, "alerts"), where("user", "==", currentUser.email));
+            const existing = await getDocs(q);
+            existing.forEach(async (d) => await deleteDoc(d.ref));
+
+            // Create new single alert
+            const docRef = await addDoc(collection(db, "alerts"), {
                 user: currentUser.email,
                 lat: location.lat,
                 lng: location.lng,
                 message: "EMERGENCY SIGNAL",
                 createdAt: serverTimestamp()
             });
+            
+            setAlertDocId(docRef.id); // Save ID immediately
             setNotification("SIGNAL TRANSMITTED");
             setTimeout(() => setNotification(""), 3000);
         } catch (e) {
@@ -198,19 +228,19 @@ const Dashboard = () => {
 
       {/* MAP */}
       <MapContainer 
-        center={[9.0820, 8.6753]} // Start center (Nigeria)
+        center={[9.0820, 8.6753]} 
         zoom={6} 
-        minZoom={5} // Prevent zooming out to world view
-        maxBounds={NIGERIA_BOUNDS} // Lock to Nigeria
+        minZoom={5} 
+        maxBounds={NIGERIA_BOUNDS} 
         maxBoundsViscosity={1.0}
         className="h-full w-full z-0"
       >
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         
-        {/* Fix: AutoRecenter only runs once now */}
-        <AutoRecenter location={location} />
+        {/* NEW CONTROLLER: Handles panning logic */}
+        <MapController location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
         
-        <ManualRecenterBtn location={location} />
+        <ManualRecenterBtn isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
 
         {/* MY LOCATION */}
         {location && (
@@ -228,7 +258,6 @@ const Dashboard = () => {
                 <Marker 
                     key={alert.id} 
                     position={[alert.lat, alert.lng]}
-                    // FIX: Explicitly use the Red Icon for other alerts
                     icon={RedPulseIcon} 
                 >
                     <Popup><strong className="text-red-600">ALERT!</strong><br/>{alert.user}</Popup>
@@ -244,14 +273,11 @@ const Dashboard = () => {
             className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-white border-gray-300 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}
         >
             {isAlerting ? (
-                // Stop Icon when alerting
                 <Icon icon="mdi:stop" className="text-4xl text-red-600 relative z-10" />
             ) : (
-                // Bell Icon when safe
                 <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />
             )}
             
-            {/* Ping animation only when alerting */}
             {isAlerting && <div className="absolute inset-0 rounded-full animate-ping border-2 border-red-500"></div>}
         </button>
       </div>
