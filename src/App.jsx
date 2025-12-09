@@ -2,7 +2,7 @@ import React from 'react'
 import { Route, Routes } from 'react-router-dom'
 import SplashPage from './components/SplashPage'
 import Login from './components/Login'
-import Dashboard from './components/Dashboard/Dashboard'
+import Dashboard from './components/Dashboard'
 
 const App = () => {
   return (
