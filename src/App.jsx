@@ -10,6 +10,7 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Crash from './components/Crash';
 import ProtectedRoutes from './components/ProtectedRoutes';
+import Profile from './components/Profile';
 
 
 const App = () => {
@@ -46,6 +47,15 @@ const App = () => {
         element={
           <ProtectedRoutes>
             <Dashboard />
+          </ProtectedRoutes>
+        } 
+      />
+
+      <Route 
+        path="/profile" 
+        element={
+          <ProtectedRoutes>
+            <Profile />
           </ProtectedRoutes>
         } 
       />

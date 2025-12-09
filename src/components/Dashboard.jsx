@@ -6,7 +6,8 @@ import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc } from 'firebase/firestore';
+// Added getDoc below
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc, getDoc } from 'firebase/firestore';
 import L from 'leaflet';
 
 // --- ICONS ---
@@ -83,6 +84,7 @@ const LogoutModal = ({ onConfirm, onCancel }) => (
 const Dashboard = () => {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null); // <--- NEW: Stores profile data
   const [location, setLocation] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [isAlerting, setIsAlerting] = useState(false);
@@ -92,14 +94,28 @@ const Dashboard = () => {
   const [isMapLocked, setIsMapLocked] = useState(true);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // AUTH & PROFILE FETCH
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) { setCurrentUser(user); setIsLoading(false); } 
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) { 
+        setCurrentUser(user);
+        
+        // --- FETCH PROFILE ON LOGIN ---
+        const docRef = doc(db, "users", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            setUserProfile(docSnap.data());
+        }
+        // ------------------------------
+        
+        setIsLoading(false); 
+      } 
       else { navigate('/login'); }
     });
     return () => unsubscribe();
   }, [navigate]);
 
+  // LOCATION TRACKER
   useEffect(() => {
     if (!currentUser) return;
     if (navigator.geolocation) {
@@ -118,6 +134,7 @@ const Dashboard = () => {
     }
   }, [currentUser, isAlerting, alertDocId]);
 
+  // DB LISTENER
   useEffect(() => {
     if (!currentUser) return;
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
@@ -136,6 +153,7 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, [currentUser]);
 
+  // TOGGLE ALERT
   const toggleAlert = async () => {
     if (!location) return;
 
@@ -153,10 +171,11 @@ const Dashboard = () => {
             const existing = await getDocs(q);
             existing.forEach(async (d) => await deleteDoc(d.ref));
 
-            // --- SAVE DISPLAY NAME HERE ---
+            // --- SAVE PROFILE DATA WITH ALERT ---
             await addDoc(collection(db, "alerts"), {
                 user: currentUser.email,
-                userName: currentUser.displayName || "Unknown Agent", // <--- NEW FIELD
+                userName: userProfile?.fullName || currentUser.displayName || "Unknown Agent",
+                userPhone: userProfile?.phoneNumber || "", // Save phone number
                 lat: location.lat,
                 lng: location.lng,
                 message: "EMERGENCY SIGNAL",
@@ -180,6 +199,7 @@ const Dashboard = () => {
     <div className="h-screen w-screen relative bg-black">
       {showLogoutConfirm && <LogoutModal onConfirm={handleLogout} onCancel={() => setShowLogoutConfirm(false)} />}
 
+      {/* TOP HUD */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-4 flex justify-between pointer-events-none">
          <div className={`backdrop-blur-md border px-4 py-2 rounded-lg pointer-events-auto flex items-center gap-3 transition-colors ${isAlerting ? 'bg-red-900/60 border-red-500' : 'bg-black/60 border-white/10'}`}>
             <div className={`w-2 h-2 rounded-full animate-pulse ${isAlerting ? 'bg-red-500' : 'bg-green-500'}`}></div>
@@ -187,9 +207,20 @@ const Dashboard = () => {
                 {isAlerting ? 'BROADCASTING DISTRESS' : 'LIVE UPLINK'}
             </span>
          </div>
-         <button onClick={() => setShowLogoutConfirm(true)} className="pointer-events-auto bg-gray-900/50 hover:bg-red-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white">
-            <Icon icon="mdi:logout" />
-         </button>
+         
+         <div className="flex gap-2 pointer-events-auto">
+            {/* NEW: PROFILE BUTTON */}
+            <button 
+                onClick={() => navigate('/profile')} 
+                className="bg-gray-900/50 hover:bg-cyan-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors"
+            >
+                <Icon icon="mdi:cog" />
+            </button>
+            
+            <button onClick={() => setShowLogoutConfirm(true)} className="bg-gray-900/50 hover:bg-red-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors">
+                <Icon icon="mdi:logout" />
+            </button>
+         </div>
       </div>
 
       {notification && (
@@ -209,7 +240,6 @@ const Dashboard = () => {
         {location && (
             <Marker position={[location.lat, location.lng]} icon={isAlerting ? RedPulseIcon : DefaultIcon}>
                 <Popup>
-                    {/* SHOW MY DISPLAY NAME */}
                     {isAlerting 
                         ? <><strong className="text-red-600">SIGNAL ACTIVE!</strong><br/>{currentUser?.displayName || "Me"}</> 
                         : "You are here"
@@ -221,12 +251,25 @@ const Dashboard = () => {
         {alerts.map((alert) => (
             alert.user !== currentUser?.email && (
                 <Marker key={alert.id} position={[alert.lat, alert.lng]} icon={RedPulseIcon}>
-                    <Popup>
-                        {/* SHOW OTHER USER'S DISPLAY NAME */}
-                        <strong className="text-red-600">ALERT!</strong><br/>
-                        <span className="font-mono text-sm">{alert.userName || alert.user}</span>
-                        <br/>
-                        <span className="text-xs text-gray-500">Click to locate</span>
+                    <Popup className="custom-popup">
+                        <div className="text-center p-1">
+                            <strong className="text-red-600 font-mono text-lg block mb-1">ALERT!</strong>
+                            <span className="font-bold block mb-2">{alert.userName || alert.user}</span>
+                            
+                            {/* CALL BUTTON */}
+                            {alert.userPhone && (
+                                <a 
+                                    href={`tel:${alert.userPhone}`}
+                                    className="block bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded text-sm no-underline mb-1 flex items-center justify-center gap-2"
+                                >
+                                    <Icon icon="mdi:phone" /> CALL NOW
+                                </a>
+                            )}
+                            
+                            <span className="text-xs text-gray-500 font-mono">
+                                {new Date(alert.createdAt?.seconds * 1000).toLocaleTimeString()}
+                            </span>
+                        </div>
                     </Popup>
                 </Marker>
             )
