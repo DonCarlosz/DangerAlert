@@ -1,5 +1,5 @@
 // src/components/Dashboard.jsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'; 
 import 'leaflet/dist/leaflet.css';
@@ -9,15 +9,9 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc, getDoc } from 'firebase/firestore';
 import L from 'leaflet';
 
-// --- IMPORT THE NEW COMPONENT ---
-import EmergencyTypeModal from './EmergencyTypeModal'; 
-
 // --- ICONS CONFIGURATION ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
-// --- SOUND ASSET ---
-const SIREN_AUDIO_URL = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.m4a"; 
 
 const DefaultIcon = L.icon({
     iconUrl: markerIcon,
@@ -58,8 +52,9 @@ const AccidentIcon = L.divIcon({
     iconSize: [24, 24], iconAnchor: [12, 12] 
 });
 
+// Helper to select the right icon based on the string type stored in DB
 const getIconByType = (type) => {
-    if (!type) return SecurityIcon;
+    if (!type) return SecurityIcon; // Fallback
     switch (type.toLowerCase()) {
         case 'medical': return MedicalIcon;
         case 'fire': return FireIcon;
@@ -70,18 +65,6 @@ const getIconByType = (type) => {
 
 L.Marker.prototype.options.icon = DefaultIcon;
 const NIGERIA_BOUNDS = [[4.0, 2.5], [14.0, 15.0]];
-
-// --- UTILITY: HAVERSINE DISTANCE FORMULA ---
-const getDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; 
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = 
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; 
-};
 
 // --- SUB-COMPONENTS ---
 const MapController = ({ location, isLocked, setIsLocked }) => {
@@ -120,6 +103,41 @@ const LogoutModal = ({ onConfirm, onCancel }) => (
     </div>
 );
 
+// --- EMERGENCY TYPE SELECTOR MODAL ---
+const EmergencyTypeModal = ({ onSelect, onCancel }) => {
+    const types = [
+        { id: 'security', label: 'SECURITY', icon: 'mdi:shield-alert', color: 'bg-red-600', border: 'border-red-500' },
+        { id: 'medical', label: 'MEDICAL', icon: 'mdi:ambulance', color: 'bg-green-600', border: 'border-green-500' },
+        { id: 'fire', label: 'FIRE', icon: 'mdi:fire', color: 'bg-orange-600', border: 'border-orange-500' },
+        { id: 'accident', label: 'ACCIDENT', icon: 'mdi:car-emergency', color: 'bg-yellow-600', border: 'border-yellow-500' },
+    ];
+
+    return (
+        <div className="fixed inset-0 z-[3000] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm">
+                <h2 className="text-center text-white font-mono text-xl font-bold mb-6 tracking-widest animate-pulse">
+                    SELECT EMERGENCY TYPE
+                </h2>
+                <div className="grid grid-cols-2 gap-4">
+                    {types.map((t) => (
+                        <button 
+                            key={t.id}
+                            onClick={() => onSelect(t.id)}
+                            className={`${t.color} bg-opacity-20 border-2 ${t.border} hover:bg-opacity-40 p-6 rounded-xl flex flex-col items-center gap-3 transition-all active:scale-95 group`}
+                        >
+                            <Icon icon={t.icon} className="text-4xl text-white group-hover:scale-110 transition-transform" />
+                            <span className="text-white font-mono font-bold tracking-wider">{t.label}</span>
+                        </button>
+                    ))}
+                </div>
+                <button onClick={onCancel} className="w-full mt-8 py-4 text-gray-500 hover:text-white font-mono text-sm">
+                    CANCEL TRANSMISSION
+                </button>
+            </div>
+        </div>
+    );
+};
+
 // --- MAIN DASHBOARD ---
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -129,7 +147,9 @@ const Dashboard = () => {
   const [alerts, setAlerts] = useState([]);
   const [isAlerting, setIsAlerting] = useState(false);
   const [alertDocId, setAlertDocId] = useState(null);
-  const [myAlertType, setMyAlertType] = useState(null);
+  
+  // NEW: Track MY active alert type so my own marker is colored correctly
+  const [myAlertType, setMyAlertType] = useState(null); 
   
   const [notification, setNotification] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -137,14 +157,7 @@ const Dashboard = () => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showTypeModal, setShowTypeModal] = useState(false);
 
-  const sirenRef = useRef(new Audio(SIREN_AUDIO_URL));
-
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission !== 'granted') {
-        Notification.requestPermission();
-    }
-  }, []);
-
+  // AUTH & PROFILE
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) { 
@@ -158,6 +171,7 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, [navigate]);
 
+  // LOCATION TRACKER
   useEffect(() => {
     if (!currentUser) return;
     if (navigator.geolocation) {
@@ -165,6 +179,7 @@ const Dashboard = () => {
             (pos) => {
                 const newLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
                 setLocation(newLocation);
+                // Update DB if alerting
                 if (isAlerting && alertDocId) {
                    const docRef = doc(db, "alerts", alertDocId);
                    updateDoc(docRef, { lat: newLocation.lat, lng: newLocation.lng }).catch(console.error);
@@ -176,76 +191,55 @@ const Dashboard = () => {
     }
   }, [currentUser, isAlerting, alertDocId]);
 
+  // DB SYNC LISTENER
   useEffect(() => {
     if (!currentUser) return;
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
-    
-    let isFirstLoad = true;
-
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAlerts(fetchedAlerts);
         
+        // Find if I have an active alert
         const myActiveAlert = fetchedAlerts.find(a => a.user && a.user.toLowerCase() === currentUser.email.toLowerCase());
+        
         if (myActiveAlert) {
             setIsAlerting(true);
             setAlertDocId(myActiveAlert.id);
-            setMyAlertType(myActiveAlert.type);
+            // FIX: Save my active type so my marker knows what color to be
+            setMyAlertType(myActiveAlert.type); 
         } else {
             setIsAlerting(false);
             setAlertDocId(null);
             setMyAlertType(null);
         }
-
-        if (!isFirstLoad && location) {
-            snapshot.docChanges().forEach((change) => {
-                if (change.type === "added") {
-                    const newAlert = change.doc.data();
-                    if (newAlert.user.toLowerCase() === currentUser.email.toLowerCase()) return;
-
-                    const distKm = getDistance(location.lat, location.lng, newAlert.lat, newAlert.lng);
-                    const alertTime = newAlert.createdAt?.seconds * 1000 || Date.now();
-                    const isRecent = (Date.now() - alertTime) < 120000;
-
-                    if (distKm <= 2.0 && isRecent) {
-                        sirenRef.current.currentTime = 0;
-                        sirenRef.current.play().catch(e => console.log("Audio play blocked", e));
-
-                        if (Notification.permission === 'granted') {
-                            new Notification(`DANGER NEARBY (${distKm.toFixed(1)}km)`, {
-                                body: `${newAlert.type.toUpperCase()} alert from ${newAlert.userName}`,
-                                icon: markerIcon
-                            });
-                        }
-
-                        setNotification(`DANGER DETECTED: ${distKm.toFixed(1)}KM AWAY`);
-                        setTimeout(() => setNotification(""), 5000);
-                    }
-                }
-            });
-        }
-        isFirstLoad = false;
     });
     return () => unsubscribe();
-  }, [currentUser, location]);
+  }, [currentUser]);
 
+  // --- ACTIONS ---
   const handleAlertClick = () => {
-      if (isAlerting) { stopAlert(); } 
-      else { if (!location) return; setShowTypeModal(true); }
+      if (isAlerting) {
+          stopAlert();
+      } else {
+          if (!location) return;
+          setShowTypeModal(true);
+      }
   };
 
   const startAlert = async (type) => {
       setShowTypeModal(false);
       try {
+          // Cleanup old alerts first
           const q = query(collection(db, "alerts"), where("user", "==", currentUser.email));
           const existing = await getDocs(q);
           existing.forEach(async (d) => await deleteDoc(d.ref));
 
+          // Create New Alert with TYPE
           const docRef = await addDoc(collection(db, "alerts"), {
               user: currentUser.email,
               userName: userProfile?.fullName || currentUser.displayName || "Unknown Agent",
               userPhone: userProfile?.phoneNumber || "",
-              type: type, 
+              type: type, // Save selected type (medical, fire, etc)
               lat: location.lat,
               lng: location.lng,
               message: "EMERGENCY SIGNAL",
@@ -253,6 +247,7 @@ const Dashboard = () => {
           });
           
           setAlertDocId(docRef.id);
+          // NOTE: setIsAlerting and setMyAlertType will be handled by the onSnapshot listener automatically
           setNotification(`${type.toUpperCase()} ALERT SENT`);
           setTimeout(() => setNotification(""), 3000);
       } catch (e) {
@@ -279,9 +274,10 @@ const Dashboard = () => {
     <div className="h-screen w-screen relative bg-black">
       {showLogoutConfirm && <LogoutModal onConfirm={handleLogout} onCancel={() => setShowLogoutConfirm(false)} />}
       
-      {/* RENDER THE IMPORTED MODAL */}
+      {/* TYPE SELECTOR MODAL */}
       {showTypeModal && <EmergencyTypeModal onSelect={startAlert} onCancel={() => setShowTypeModal(false)} />}
 
+      {/* TOP HUD */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-4 flex justify-between pointer-events-none">
          <div className={`backdrop-blur-md border px-4 py-2 rounded-lg pointer-events-auto flex items-center gap-3 transition-colors ${isAlerting ? 'bg-red-900/60 border-red-500' : 'bg-black/60 border-white/10'}`}>
             <div className={`w-2 h-2 rounded-full animate-pulse ${isAlerting ? 'bg-red-500' : 'bg-green-500'}`}></div>
@@ -313,8 +309,13 @@ const Dashboard = () => {
         <MapController location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
         <ManualRecenterBtn location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
 
+        {/* MY LOCATION MARKER */}
         {location && (
-            <Marker position={[location.lat, location.lng]} icon={isAlerting ? getIconByType(myAlertType) : DefaultIcon}>
+            <Marker 
+                position={[location.lat, location.lng]} 
+                // FIX: Use myAlertType to determine the icon color if alerting
+                icon={isAlerting ? getIconByType(myAlertType) : DefaultIcon}
+            >
                 <Popup>
                     {isAlerting 
                         ? <><strong className="text-red-600">{myAlertType?.toUpperCase()} ACTIVE!</strong><br/>{currentUser?.displayName || "Me"}</> 
@@ -324,11 +325,14 @@ const Dashboard = () => {
             </Marker>
         )}
 
+        {/* OTHER USERS' ALERTS */}
         {alerts.map((alert) => (
             alert.user !== currentUser?.email && (
+                // Use the type saved in the alert document to choose icon
                 <Marker key={alert.id} position={[alert.lat, alert.lng]} icon={getIconByType(alert.type)}>
                     <Popup className="custom-popup">
                         <div className="text-center p-1">
+                            {/* Display the type in the popup */}
                             <strong className="text-red-600 font-mono text-lg block mb-1 uppercase">{alert.type} ALERT</strong>
                             <span className="font-bold block mb-2">{alert.userName || alert.user}</span>
                             {alert.userPhone && (
