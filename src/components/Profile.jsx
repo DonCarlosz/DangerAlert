@@ -42,8 +42,19 @@ const Profile = () => {
     setSaving(true);
     try {
       const user = auth.currentUser;
+      
+      // --- THE FIX IS HERE ---
+      // We combine the form data with the Auth data (Email & UID)
+      // This ensures the email is permanently saved to the database for searching.
+      const dataToSave = {
+          ...formData,
+          email: user.email.toLowerCase(), // <--- INJECTING EMAIL HERE
+          uid: user.uid
+      };
+
       // Save to "users" collection with UID as document ID
-      await setDoc(doc(db, "users", user.uid), formData, { merge: true });
+      await setDoc(doc(db, "users", user.uid), dataToSave, { merge: true });
+      
       navigate('/dashboard');
     } catch (error) {
       console.error("Error saving profile:", error);
@@ -77,7 +88,7 @@ const Profile = () => {
               type="text" 
               required
               className="w-full bg-gray-900 border border-gray-700 rounded p-3 pl-10 focus:border-cyan-500 focus:outline-none"
-              value={formData.fullName}
+              value={formData.fullName || ''} // Added || '' to prevent uncontrolled input warning
               onChange={(e) => setFormData({...formData, fullName: e.target.value})}
             />
           </div>
@@ -93,7 +104,7 @@ const Profile = () => {
               required
               placeholder="+234..."
               className="w-full bg-gray-900 border border-gray-700 rounded p-3 pl-10 focus:border-cyan-500 focus:outline-none"
-              value={formData.phoneNumber}
+              value={formData.phoneNumber || ''}
               onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
             />
           </div>
@@ -105,7 +116,7 @@ const Profile = () => {
             <label className="text-xs text-gray-500 uppercase">Blood Type</label>
             <select 
               className="w-full bg-gray-900 border border-gray-700 rounded p-3 focus:border-cyan-500 focus:outline-none"
-              value={formData.bloodType}
+              value={formData.bloodType || ''}
               onChange={(e) => setFormData({...formData, bloodType: e.target.value})}
             >
               <option value="">Unknown</option>
@@ -127,7 +138,7 @@ const Profile = () => {
             <input 
               type="tel" 
               className="w-full bg-gray-900 border border-gray-700 rounded p-3 focus:border-cyan-500 focus:outline-none"
-              value={formData.emergencyContact}
+              value={formData.emergencyContact || ''}
               onChange={(e) => setFormData({...formData, emergencyContact: e.target.value})}
             />
         </div>
