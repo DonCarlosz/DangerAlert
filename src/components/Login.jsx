@@ -1,10 +1,16 @@
 // src/components/Login.jsx
-import React, { useState, useEffect } from 'react'; // Added useEffect
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '@iconify/react';
-import { auth } from '../firebase';
-// Added onAuthStateChanged below
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../firebase';
+import { 
+    signInWithEmailAndPassword, 
+    createUserWithEmailAndPassword, 
+    updateProfile, 
+    onAuthStateChanged 
+} from 'firebase/auth';
+// --- ADDED THIS IMPORT ---
+import { doc, setDoc } from 'firebase/firestore'; 
 
 const Login = () => {
   const navigate = useNavigate();
@@ -13,12 +19,9 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // --- NEW: REVERSE AUTH CHECK ---
-  // If user is already logged in, force them to Dashboard immediately
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // "replace: true" prevents the Back button from returning here
         navigate('/dashboard', { replace: true }); 
       }
     });
@@ -32,15 +35,30 @@ const Login = () => {
 
     try {
       if (isRegistering) {
+        // 1. Create Auth User
         const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
-        await updateProfile(userCredential.user, { displayName: formData.displayName });
+        const user = userCredential.user;
+
+        // 2. Update Profile Name
+        await updateProfile(user, { displayName: formData.displayName });
+
+        // 3. --- CRITICAL FIX: SAVE TO DATABASE ---
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            email: user.email.toLowerCase(), // Force lowercase for searching
+            fullName: formData.displayName,
+            phoneNumber: "", // Placeholder
+            roster: []       // Empty friends list
+        });
+
       } else {
         await signInWithEmailAndPassword(auth, formData.email, formData.password);
       }
-      // Note: The useEffect above will handle the redirect, 
-      // but we keep this here for immediate feedback after button click
+      // Note: The useEffect will handle the navigation, 
+      // but we leave this here for immediate feedback
       navigate('/dashboard', { replace: true }); 
     } catch (err) {
+      console.error(err);
       setError("ACCESS_DENIED :: " + err.code.replace('auth/', '').toUpperCase());
     } finally {
       setLoading(false);
@@ -68,7 +86,6 @@ const Login = () => {
         {/* Card Content */}
         <div className="bg-black/80 backdrop-blur-xl border border-white/10 p-8 shadow-[0_0_50px_rgba(220,38,38,0.2)] relative overflow-hidden">
             
-            {/* Header */}
             <div className="flex flex-col items-center mb-8">
                 <div className="w-16 h-16 bg-red-900/30 rounded-full flex items-center justify-center border border-red-500/50 mb-4 animate-pulse">
                     <Icon icon="mdi:radar" className="text-3xl text-red-500" />
@@ -81,7 +98,6 @@ const Login = () => {
                 </p>
             </div>
 
-            {/* TABS */}
             <div className="flex border-b border-white/10 mb-6">
                 <button 
                     type="button"
@@ -99,7 +115,6 @@ const Login = () => {
                 </button>
             </div>
 
-            {/* Error Message */}
             {error && (
                 <div className="bg-red-900/30 border-l-4 border-red-600 text-red-200 p-3 mb-6 text-xs font-mono flex items-start gap-2">
                     <Icon icon="mdi:alert" className="text-base mt-0.5" />
@@ -107,9 +122,7 @@ const Login = () => {
                 </div>
             )}
 
-            {/* FORM */}
             <form onSubmit={handleAuth} className="space-y-5">
-                
                 {isRegistering && (
                     <div className="relative group/input animate-in fade-in slide-in-from-left-4 duration-300">
                         <Icon icon="mdi:badge-account-outline" className="absolute left-3 top-3.5 text-gray-500 group-focus-within/input:text-red-500 transition-colors" />
@@ -163,7 +176,6 @@ const Login = () => {
                 </button>
             </form>
 
-            {/* Footer Status */}
             <div className="mt-8 flex justify-between text-[10px] text-gray-600 font-mono uppercase border-t border-white/5 pt-4">
                 <span>Status: <span className="text-red-500 animate-pulse">ACTIVE</span></span>
                 <span>V.1.0.4 - SECURE</span>

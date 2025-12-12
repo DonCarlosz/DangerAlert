@@ -8,7 +8,7 @@ import { collection, query, where, getDocs, updateDoc, doc, arrayUnion, getDoc, 
 const Team = () => {
   const navigate = useNavigate();
   const [searchEmail, setSearchEmail] = useState('');
-  const [team, setTeam] = useState([]); // List of your friends
+  const [team, setTeam] = useState([]);
   const [searchResult, setSearchResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -20,16 +20,12 @@ const Team = () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      // Get my profile to see my 'roster' array
       const myDocRef = doc(db, "users", user.uid);
       const myDoc = await getDoc(myDocRef);
 
       if (myDoc.exists() && myDoc.data().roster) {
-        // The roster array contains UIDs. We need to fetch their profile details.
         const rosterUids = myDoc.data().roster;
         if (rosterUids.length > 0) {
-            // Firestore 'in' query supports up to 10 items. 
-            // For production, you'd loop this, but for MVP this is fine.
             const q = query(collection(db, "users"), where("__name__", "in", rosterUids));
             const querySnapshot = await getDocs(q);
             const teamData = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -41,29 +37,31 @@ const Team = () => {
     fetchRoster();
   }, []);
 
-  // 2. SEARCH FOR USER
+  // 2. SEARCH FOR USER (UPDATED)
   const handleSearch = async (e) => {
     e.preventDefault();
     setError(''); setSuccess(''); setSearchResult(null);
 
-    if (searchEmail === auth.currentUser.email) {
+    const emailToSearch = searchEmail.trim().toLowerCase(); // Normalize input
+
+    if (emailToSearch === auth.currentUser.email.toLowerCase()) {
         setError("CANNOT ADD YOURSELF");
         return;
     }
 
     try {
-        const q = query(collection(db, "users"), where("email", "==", searchEmail));
+        const q = query(collection(db, "users"), where("email", "==", emailToSearch));
         const querySnapshot = await getDocs(q);
 
         if (querySnapshot.empty) {
-            setError("OPERATIVE NOT FOUND");
+            setError("OPERATIVE NOT FOUND (Check Email Spelling)");
         } else {
             const userFound = querySnapshot.docs[0];
             setSearchResult({ id: userFound.id, ...userFound.data() });
         }
     } catch (err) {
-        console.error(err);
-        setError("SEARCH ERROR");
+        console.error("Search Error:", err);
+        setError("SYSTEM ERROR: CHECK CONSOLE");
     }
   };
 
@@ -72,13 +70,12 @@ const Team = () => {
     if (!searchResult) return;
     try {
         const myDocRef = doc(db, "users", auth.currentUser.uid);
-        // Add the UID to my roster array
         await updateDoc(myDocRef, {
             roster: arrayUnion(searchResult.id)
         });
         
         setSuccess(`AGENT ${searchResult.fullName || 'UNKNOWN'} ADDED`);
-        setTeam(prev => [...prev, searchResult]); // Update UI instantly
+        setTeam(prev => [...prev, searchResult]);
         setSearchResult(null);
         setSearchEmail('');
     } catch (err) {
