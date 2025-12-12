@@ -11,6 +11,7 @@ import Dashboard from './components/Dashboard';
 import Crash from './components/Crash';
 import ProtectedRoutes from './components/ProtectedRoutes';
 import Profile from './components/Profile';
+import Team from './components/Team';
 
 
 const App = () => {
@@ -56,6 +57,15 @@ const App = () => {
         element={
           <ProtectedRoutes>
             <Profile />
+          </ProtectedRoutes>
+        } 
+      />
+
+      <Route 
+        path="/team" 
+        element={
+          <ProtectedRoutes>
+            <Team />
           </ProtectedRoutes>
         } 
       />

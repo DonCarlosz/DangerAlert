@@ -9,7 +9,7 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc, getDoc } from 'firebase/firestore';
 import L from 'leaflet';
 
-// --- IMPORT THE NEW COMPONENT ---
+// --- IMPORT THE NEW COMPONENT HERE ---
 import EmergencyTypeModal from './EmergencyTypeModal';
 
 // --- ICONS CONFIGURATION ---
