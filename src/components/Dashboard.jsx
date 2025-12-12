@@ -10,7 +10,7 @@ import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, delete
 import L from 'leaflet';
 
 // --- IMPORT THE NEW COMPONENT ---
-import EmergencyTypeModal from './EmergencyTypeModal'; 
+import EmergencyTypeModal from './EmergencyTypeModal';
 
 // --- ICONS CONFIGURATION ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -296,10 +296,15 @@ const Dashboard = () => {
             </span>
          </div>
          <div className="flex gap-2 pointer-events-auto">
-            {/* TEAM BUTTON (Placeholder for next feature) */}
-            <button onClick={() => navigate('/team')} className="bg-gray-900/50 hover:bg-green-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors">
+            
+            {/* --- TEAM BUTTON (ADDED HERE) --- */}
+            <button 
+                onClick={() => navigate('/team')} 
+                className="bg-gray-900/50 hover:bg-green-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors"
+            >
                 <Icon icon="mdi:account-group" />
             </button>
+            {/* ------------------------------- */}
 
             <button onClick={() => navigate('/profile')} className="bg-gray-900/50 hover:bg-cyan-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors">
                 <Icon icon="mdi:cog" />

@@ -1,18 +1,18 @@
 // src/App.jsx
-import React, { useEffect, useState } from 'react';
-import { Route, Routes, Navigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from './firebase';
+import React, { useEffect, useState } from "react";
+import { Route, Routes, Navigate } from "react-router-dom";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebase";
 
 // Components
-import SplashPage from './components/SplashPage';
-import Login from './components/Login';
-import Dashboard from './components/Dashboard';
-import Crash from './components/Crash';
-import ProtectedRoutes from './components/ProtectedRoutes';
-import Profile from './components/Profile';
-import Team from './components/Team';
-
+import SplashPage from "./components/SplashPage";
+import Login from "./components/Login";
+import Dashboard from "./components/Dashboard";
+import Crash from "./components/Crash";
+import ProtectedRoutes from "./components/ProtectedRoutes";
+import Profile from "./components/Profile";
+import Team from "./components/Team";
+import GhostMode from "./components/GhostMode";
 
 const App = () => {
   // We need a global auth check for the "Public" routes (Splash/Login)
@@ -33,47 +33,56 @@ const App = () => {
   return (
     <Routes>
       {/* --- PUBLIC ROUTES (Redirect to Dashboard if already logged in) --- */}
-      <Route 
-        path="/" 
-        element={!user ? <SplashPage /> : <Navigate to="/dashboard" replace />} 
+      <Route
+        path="/"
+        element={!user ? <SplashPage /> : <Navigate to="/dashboard" replace />}
       />
-      <Route 
-        path="/login" 
-        element={!user ? <Login /> : <Navigate to="/dashboard" replace />} 
+      <Route
+        path="/login"
+        element={!user ? <Login /> : <Navigate to="/dashboard" replace />}
       />
 
       {/* --- PROTECTED ROUTES (Redirect to Login if NOT logged in) --- */}
-      <Route 
-        path="/dashboard" 
+      <Route
+        path="/dashboard"
         element={
           <ProtectedRoutes>
             <Dashboard />
           </ProtectedRoutes>
-        } 
+        }
       />
 
-      <Route 
-        path="/profile" 
+      <Route
+        path="/profile"
         element={
           <ProtectedRoutes>
             <Profile />
           </ProtectedRoutes>
-        } 
+        }
       />
 
-      <Route 
-        path="/team" 
+      <Route
+        path="/team"
         element={
           <ProtectedRoutes>
             <Team />
           </ProtectedRoutes>
-        } 
+        }
+      />
+
+      <Route
+        path="/ghost"
+        element={
+          <ProtectedRoutes>
+            <GhostMode />
+          </ProtectedRoutes>
+        }
       />
 
       {/* --- CATCH ALL --- */}
       <Route path="*" element={<Crash />} />
     </Routes>
   );
-}
+};
 
 export default App;
