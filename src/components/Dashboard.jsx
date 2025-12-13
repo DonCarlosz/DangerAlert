@@ -1,112 +1,23 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'; 
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'; 
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc, getDoc } from 'firebase/firestore';
-import L from 'leaflet';
 
-// --- IMPORT THE NEW COMPONENT ---
+// --- IMPORTS ---
 import EmergencyTypeModal from './EmergencyTypeModal';
-
-// --- ICONS CONFIGURATION ---
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+// Import shared map logic to keep file clean
+import { 
+    DefaultIcon, getIconByType, NIGERIA_BOUNDS, 
+    getDistance, MapController, ManualRecenterBtn 
+} from './MapUI';
 
 // --- SOUND ASSET ---
 const SIREN_AUDIO_URL = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.m4a"; 
-
-const DefaultIcon = L.icon({
-    iconUrl: markerIcon,
-    shadowUrl: markerShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
-
-// 1. SECURITY (RED)
-const SecurityIcon = L.divIcon({
-    className: "custom-icon",
-    html: `<div class="w-6 h-6 bg-red-600 rounded-full border-2 border-white shadow-[0_0_20px_rgba(220,38,38,1)] animate-ping"></div>
-           <div class="absolute top-0 left-0 w-6 h-6 bg-red-600 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white">🛡️</div>`,
-    iconSize: [24, 24], iconAnchor: [12, 12] 
-});
-
-// 2. MEDICAL (GREEN)
-const MedicalIcon = L.divIcon({
-    className: "custom-icon",
-    html: `<div class="w-6 h-6 bg-green-600 rounded-full border-2 border-white shadow-[0_0_20px_rgba(34,197,94,1)] animate-ping"></div>
-           <div class="absolute top-0 left-0 w-6 h-6 bg-green-600 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white">🚑</div>`,
-    iconSize: [24, 24], iconAnchor: [12, 12] 
-});
-
-// 3. FIRE (ORANGE)
-const FireIcon = L.divIcon({
-    className: "custom-icon",
-    html: `<div class="w-6 h-6 bg-orange-600 rounded-full border-2 border-white shadow-[0_0_20px_rgba(249,115,22,1)] animate-ping"></div>
-           <div class="absolute top-0 left-0 w-6 h-6 bg-orange-600 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white">🔥</div>`,
-    iconSize: [24, 24], iconAnchor: [12, 12] 
-});
-
-// 4. ACCIDENT (YELLOW)
-const AccidentIcon = L.divIcon({
-    className: "custom-icon",
-    html: `<div class="w-6 h-6 bg-yellow-500 rounded-full border-2 border-white shadow-[0_0_20px_rgba(234,179,8,1)] animate-ping"></div>
-           <div class="absolute top-0 left-0 w-6 h-6 bg-yellow-500 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-black">⚠️</div>`,
-    iconSize: [24, 24], iconAnchor: [12, 12] 
-});
-
-const getIconByType = (type) => {
-    if (!type) return SecurityIcon;
-    switch (type.toLowerCase()) {
-        case 'medical': return MedicalIcon;
-        case 'fire': return FireIcon;
-        case 'accident': return AccidentIcon;
-        case 'security': default: return SecurityIcon;
-    }
-};
-
-L.Marker.prototype.options.icon = DefaultIcon;
-const NIGERIA_BOUNDS = [[4.0, 2.5], [14.0, 15.0]];
-
-// --- UTILITY: HAVERSINE DISTANCE FORMULA ---
-const getDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; 
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = 
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; 
-};
-
-// --- SUB-COMPONENTS ---
-const MapController = ({ location, isLocked, setIsLocked }) => {
-    const map = useMap();
-    useMapEvents({ dragstart: () => isLocked && setIsLocked(false) });
-    useEffect(() => {
-        if (location && isLocked) map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 1.5 });
-    }, [location, isLocked, map]);
-    return null;
-};
-
-const ManualRecenterBtn = ({ location, isLocked, setIsLocked }) => {
-    const map = useMap();
-    const handleClick = () => {
-        if (!isLocked) { setIsLocked(true); if (location) map.flyTo([location.lat, location.lng], 16, { animate: true, duration: 1.5 }); } 
-        else { setIsLocked(false); }
-    };
-    return (
-        <div className="leaflet-bottom leaflet-right" style={{ marginBottom: '90px', marginRight: '10px', pointerEvents: 'auto', zIndex: 1000 }}>
-             <button onClick={handleClick} className={`p-2 rounded-lg border shadow-xl flex items-center justify-center w-12 h-12 transition-all active:scale-95 ${isLocked ? 'bg-cyan-600 border-cyan-400 text-white shadow-cyan-900/50' : 'bg-gray-900/80 border-white/20 text-gray-400 hover:text-white'}`}>
-                <Icon icon={isLocked ? "mdi:gps-fixed" : "mdi:gps-not-fixed"} className="text-2xl" />
-            </button>
-        </div>
-    );
-};
 
 const LogoutModal = ({ onConfirm, onCancel }) => (
     <div className="fixed inset-0 z-[3000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -194,9 +105,12 @@ const Dashboard = () => {
         
         const myActiveAlert = fetchedAlerts.find(a => a.user && a.user.toLowerCase() === currentUser.email.toLowerCase());
         if (myActiveAlert) {
-            setIsAlerting(true);
-            setAlertDocId(myActiveAlert.id);
-            setMyAlertType(myActiveAlert.type);
+            // Ignore if it's a Ghost alert (GhostMode.jsx handles that now)
+            if (myActiveAlert.type !== 'ghost') {
+                setIsAlerting(true);
+                setAlertDocId(myActiveAlert.id);
+                setMyAlertType(myActiveAlert.type);
+            }
         } else {
             setIsAlerting(false);
             setAlertDocId(null);
@@ -208,6 +122,9 @@ const Dashboard = () => {
                 if (change.type === "added") {
                     const newAlert = change.doc.data();
                     if (newAlert.user.toLowerCase() === currentUser.email.toLowerCase()) return;
+                    
+                    // Don't play siren for Ghost alerts in Dashboard
+                    if (newAlert.type === 'ghost') return;
 
                     const distKm = getDistance(location.lat, location.lng, newAlert.lat, newAlert.lng);
                     const alertTime = newAlert.createdAt?.seconds * 1000 || Date.now();
@@ -285,9 +202,9 @@ const Dashboard = () => {
     <div className="h-screen w-screen relative bg-black">
       {showLogoutConfirm && <LogoutModal onConfirm={handleLogout} onCancel={() => setShowLogoutConfirm(false)} />}
       
-      {/* RENDER THE IMPORTED MODAL */}
       {showTypeModal && <EmergencyTypeModal onSelect={startAlert} onCancel={() => setShowTypeModal(false)} />}
 
+      {/* TOP HUD */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-4 flex justify-between pointer-events-none">
          <div className={`backdrop-blur-md border px-4 py-2 rounded-lg pointer-events-auto flex items-center gap-3 transition-colors ${isAlerting ? 'bg-red-900/60 border-red-500' : 'bg-black/60 border-white/10'}`}>
             <div className={`w-2 h-2 rounded-full animate-pulse ${isAlerting ? 'bg-red-500' : 'bg-green-500'}`}></div>
@@ -297,14 +214,10 @@ const Dashboard = () => {
          </div>
          <div className="flex gap-2 pointer-events-auto">
             
-            {/* --- TEAM BUTTON (ADDED HERE) --- */}
-            <button 
-                onClick={() => navigate('/team')} 
-                className="bg-gray-900/50 hover:bg-green-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors"
-            >
-                <Icon icon="mdi:account-group" />
+            {/* GHOST MODE BUTTON */}
+            <button onClick={() => navigate('/ghost')} className="bg-gray-900/50 hover:bg-cyan-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-cyan-400 transition-colors">
+                <Icon icon="mdi:eye-outline" />
             </button>
-            {/* ------------------------------- */}
 
             <button onClick={() => navigate('/profile')} className="bg-gray-900/50 hover:bg-cyan-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white transition-colors">
                 <Icon icon="mdi:cog" />
@@ -324,6 +237,7 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* MAP LAYER */}
       <MapContainer center={[9.0820, 8.6753]} zoom={6} minZoom={5} maxBounds={NIGERIA_BOUNDS} maxBoundsViscosity={1.0} className="h-full w-full z-0">
         <TileLayer attribution='&copy; CARTO' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
         <MapController location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
@@ -341,7 +255,8 @@ const Dashboard = () => {
         )}
 
         {alerts.map((alert) => (
-            alert.user !== currentUser?.email && (
+            // Hide own alerts, and HIDE GHOST ALERTS from main dashboard (they belong in ghost mode)
+            alert.user !== currentUser?.email && alert.type !== 'ghost' && (
                 <Marker key={alert.id} position={[alert.lat, alert.lng]} icon={getIconByType(alert.type)}>
                     <Popup className="custom-popup">
                         <div className="text-center p-1">
@@ -359,6 +274,7 @@ const Dashboard = () => {
         ))}
       </MapContainer>
 
+      {/* ACTION BUTTON */}
       <div className="absolute bottom-10 left-0 right-0 flex justify-center z-[1000]">
         <button onClick={handleAlertClick} className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all cursor-pointer ${isAlerting ? 'bg-white border-gray-300 scale-95' : 'bg-red-600 border-red-800 hover:scale-105 active:scale-95'}`}>
             {isAlerting ? <Icon icon="mdi:stop" className="text-4xl text-red-600 relative z-10" /> : <Icon icon="mdi:bell-ring" className="text-4xl text-white relative z-10" />}
