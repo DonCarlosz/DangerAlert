@@ -7,10 +7,11 @@ import { Icon } from '@iconify/react';
 import { auth, db } from '../firebase'; 
 import { collection, addDoc, query, onSnapshot, serverTimestamp, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
-// --- IMPORT SHARED MAP UI (Cleaner Code) ---
+// --- IMPORT SHARED MAP UI ---
 import { 
     DefaultIcon, GhostIcon, 
-    MapController, NIGERIA_BOUNDS 
+    MapController, ManualRecenterBtn, // <--- Added ManualRecenterBtn
+    NIGERIA_BOUNDS 
 } from './MapUI';
 
 const GhostMode = () => {
@@ -22,6 +23,9 @@ const GhostMode = () => {
   const [isGhosting, setIsGhosting] = useState(false);
   const [alertDocId, setAlertDocId] = useState(null);
   const [status, setStatus] = useState("INITIALIZING UPLINK...");
+  
+  // --- MAP STATE (Required for MapUI) ---
+  const [isMapLocked, setIsMapLocked] = useState(true);
 
   // 1. AUTH & ROSTER
   useEffect(() => {
@@ -90,7 +94,6 @@ const GhostMode = () => {
           if (alertDocId) await deleteDoc(doc(db, "alerts", alertDocId));
       } else {
           if (!userProfile?.roster || userProfile.roster.length === 0) {
-              // Navigate to team page if roster is empty
               if(window.confirm("ROSTER EMPTY. Add agents to use Ghost Mode. Go to Roster?")) {
                   navigate('/team');
               }
@@ -125,8 +128,6 @@ const GhostMode = () => {
             
             {/* CONTROLS */}
             <div className="flex gap-2 pointer-events-auto">
-                
-                {/* --- NEW: TEAM BUTTON LOCATED HERE --- */}
                 <button 
                     onClick={() => navigate('/team')} 
                     className="bg-gray-900/80 border border-green-500/30 w-10 h-10 flex items-center justify-center rounded-lg text-green-400 hover:bg-green-900/50 transition-colors"
@@ -134,7 +135,6 @@ const GhostMode = () => {
                     <Icon icon="mdi:account-group" />
                 </button>
                 
-                {/* CLOSE / BACK TO DASHBOARD */}
                 <button onClick={() => navigate('/dashboard')} className="bg-gray-900/80 border border-red-500/30 w-10 h-10 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-900/50 transition-colors">
                     <Icon icon="mdi:close" />
                 </button>
@@ -150,7 +150,11 @@ const GhostMode = () => {
             zoomControl={false}
         >
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-            <MapController location={location} />
+            
+            {/* --- MAP UI COMPONENTS --- */}
+            <MapController location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
+            <ManualRecenterBtn location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
+            {/* ------------------------- */}
 
             {location && (
                 <Marker position={[location.lat, location.lng]} icon={isGhosting ? GhostIcon : DefaultIcon}>
