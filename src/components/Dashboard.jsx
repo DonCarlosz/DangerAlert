@@ -202,7 +202,7 @@ const Dashboard = () => {
 
   const handleLogout = async () => { setShowLogoutConfirm(false); await signOut(auth); navigate('/login'); };
 
-  if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono animate-pulse">CONNECTING...</div>;
+  if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-red-500 font-mono animate-pulse">CONNECTING...</div>;
 
   return (
     // Use h-[100dvh] for dynamic mobile viewport height

@@ -113,9 +113,8 @@ const Team = () => {
     setProcessingId(null);
   };
 
-  // 4. ACCEPT REQUEST (Detailed UI)
+  // 4. ACCEPT REQUEST
   const acceptRequest = async (req) => {
-      // Safety check
       if (!req.id || !req.fromUid || !currentUser.uid) {
           setError("DATA ERROR: Cannot link agents.");
           return;
@@ -156,7 +155,7 @@ const Team = () => {
       setProcessingId(null);
   };
 
-  // 5. REJECT REQUEST (Detailed UI)
+  // 5. REJECT REQUEST
   const rejectRequest = async (req) => {
       if(!window.confirm(`Reject connection signal from ${req.fromName}?`)) return;
       
@@ -168,15 +167,35 @@ const Team = () => {
       setProcessingId(null);
   };
 
-  // 6. REMOVE MEMBER
+  // 6. REMOVE MEMBER (MUTUAL SEVER) [UPDATED]
   const removeFromRoster = async (member) => {
       if(!window.confirm(`CONFIRM: Sever link with ${member.fullName}?`)) return;
+      
       try {
-        const myDocRef = doc(db, "users", currentUser.uid);
-        await updateDoc(myDocRef, { roster: arrayRemove(member.id) });
+        const batch = writeBatch(db);
+
+        // A. Remove Them from My list
+        const myRef = doc(db, "users", currentUser.uid);
+        batch.update(myRef, { roster: arrayRemove(member.id) });
+
+        // B. Remove Me from Their list
+        const theirRef = doc(db, "users", member.id);
+        batch.update(theirRef, { roster: arrayRemove(currentUser.uid) });
+
+        await batch.commit();
+        
+        // Remove locally immediately for snappy feel
         setTeam(prev => prev.filter(p => p.id !== member.id));
         setSuccess(`LINK SEVERED: ${member.fullName}`);
-      } catch(err) { console.error(err); setError("DB ERROR"); }
+
+      } catch(err) { 
+          console.error(err); 
+          if (err.code === 'permission-denied') {
+            setError("PERMISSION ERROR: Cannot remove from other user's list.");
+          } else {
+            setError("SEVER FAILED: Database Error"); 
+          }
+      }
   };
 
   if (loading) return <div className="h-screen bg-black flex items-center justify-center text-red-500 font-mono">LOADING ROSTER...</div>;
@@ -208,7 +227,7 @@ const Team = () => {
             </div>
         )}
 
-        {/* --- PENDING REQUESTS (NEW DESIGN) --- */}
+        {/* --- PENDING REQUESTS --- */}
         {requests.length > 0 && (
             <div className="space-y-3">
                 <h2 className="text-xs text-cyan-400 uppercase flex items-center gap-2 tracking-wider">
@@ -230,7 +249,7 @@ const Team = () => {
                             </div>
                         </div>
 
-                        {/* Action Buttons (Full Width Text) */}
+                        {/* Action Buttons */}
                         <div className="flex gap-3 w-full pt-1">
                             {processingId === req.id ? (
                                 <div className="w-full text-center text-xs text-cyan-500 py-2 animate-pulse font-mono border border-cyan-900/50 rounded bg-cyan-950/30">
@@ -319,9 +338,9 @@ const Team = () => {
                             <button 
                                 onClick={() => removeFromRoster(member)} 
                                 className="text-gray-700 hover:text-red-500 transition-colors p-2"
-                                title="Remove"
+                                title="Sever Link"
                             >
-                                <Icon icon="mdi:trash-can-outline" />
+                                <Icon icon="mdi:link-off" />
                             </button>
                         </div>
                     ))}
