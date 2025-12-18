@@ -9,7 +9,6 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, getDocs, where, updateDoc, getDoc } from 'firebase/firestore';
 
 import EmergencyTypeModal from './EmergencyTypeModal';
-// Import shared map logic
 import { 
     DefaultIcon, getIconByType, GhostIcon, NIGERIA_BOUNDS, 
     getDistance, MapController, ManualRecenterBtn 
@@ -28,7 +27,7 @@ const getTheme = (mode) => {
             pulse: 'bg-cyan-400',
             buttonBorder: 'border-cyan-500',
             buttonShadow: 'shadow-[0_0_50px_rgba(6,182,212,0.4)]',
-            statusText: 'GHOST UPLINK ACTIVE'
+            statusText: 'GHOST UPLINK'
         };
     }
     return {
@@ -59,9 +58,7 @@ const LogoutModal = ({ onConfirm, onCancel }) => (
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  
-  // --- STATE ---
-  const [mode, setMode] = useState('universal'); // 'universal' or 'ghost'
+  const [mode, setMode] = useState('universal');
   const theme = getTheme(mode);
 
   const [currentUser, setCurrentUser] = useState(null);
@@ -69,10 +66,9 @@ const Dashboard = () => {
   const [location, setLocation] = useState(null);
   const [alerts, setAlerts] = useState([]);
   
-  // Alert States
-  const [isAlerting, setIsAlerting] = useState(false); // Red Alert
-  const [isGhosting, setIsGhosting] = useState(false); // Ghost Alert
-  const [myDocId, setMyDocId] = useState(null); // ID of my active alert/ghost
+  const [isAlerting, setIsAlerting] = useState(false);
+  const [isGhosting, setIsGhosting] = useState(false);
+  const [myDocId, setMyDocId] = useState(null);
   const [myAlertType, setMyAlertType] = useState(null);
 
   const [notification, setNotification] = useState("");
@@ -105,7 +101,6 @@ const Dashboard = () => {
             (pos) => {
                 const newLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
                 setLocation(newLocation);
-                // Update specific alert if active
                 if ((isAlerting || isGhosting) && myDocId) {
                    updateDoc(doc(db, "alerts", myDocId), { lat: newLocation.lat, lng: newLocation.lng }).catch(console.error);
                 }
@@ -116,7 +111,7 @@ const Dashboard = () => {
     }
   }, [currentUser, isAlerting, isGhosting, myDocId]);
 
-  // 3. DATA LISTENER & FILTERING
+  // 3. DATA LISTENER
   useEffect(() => {
     if (!currentUser) return;
     const q = query(collection(db, "alerts"), orderBy("createdAt", "asc"));
@@ -126,36 +121,26 @@ const Dashboard = () => {
         const fetchedAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAlerts(fetchedAlerts);
         
-        // CHECK MY STATUS
         const myActive = fetchedAlerts.find(a => a.user && a.user.toLowerCase() === currentUser.email.toLowerCase());
         
         if (myActive) {
             setMyDocId(myActive.id);
             setMyAlertType(myActive.type);
-            
             if (myActive.type === 'ghost') {
-                setIsGhosting(true);
-                setIsAlerting(false);
-                setMode('ghost'); // Auto-switch UI to ghost if active
+                setIsGhosting(true); setIsAlerting(false); setMode('ghost');
             } else {
-                setIsAlerting(true);
-                setIsGhosting(false);
-                setMode('universal'); // Auto-switch UI to red if active
+                setIsAlerting(true); setIsGhosting(false); setMode('universal');
             }
         } else {
-            setIsAlerting(false);
-            setIsGhosting(false);
-            setMyDocId(null);
-            setMyAlertType(null);
+            setIsAlerting(false); setIsGhosting(false); setMyDocId(null); setMyAlertType(null);
         }
 
-        // SIREN LOGIC (Only in Universal Mode)
         if (!isFirstLoad && location && mode === 'universal') {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const newAlert = change.doc.data();
                     if (newAlert.user === currentUser.email) return;
-                    if (newAlert.type === 'ghost') return; // Silence for ghosts
+                    if (newAlert.type === 'ghost') return;
 
                     const distKm = getDistance(location.lat, location.lng, newAlert.lat, newAlert.lng);
                     const alertTime = newAlert.createdAt?.seconds * 1000 || Date.now();
@@ -176,28 +161,15 @@ const Dashboard = () => {
   }, [currentUser, location, mode]);
 
   // --- ACTIONS ---
-
   const handleMainButton = () => {
-      // If ANY alert is active, stop it
-      if (isAlerting || isGhosting) {
-          stopAlert();
-          return;
-      }
-      
-      // If in Universal Mode -> Open Type Modal (Red Alert)
-      if (mode === 'universal') {
-          if (!location) return;
-          setShowTypeModal(true);
-      } 
-      // If in Ghost Mode -> Start Ghost Immediately
-      else if (mode === 'ghost') {
-          toggleGhost();
-      }
+      if (isAlerting || isGhosting) { stopAlert(); return; }
+      if (mode === 'universal') { if (location) setShowTypeModal(true); } 
+      else if (mode === 'ghost') { toggleGhost(); }
   };
 
   const startRedAlert = async (type) => {
       setShowTypeModal(false);
-      await createAlert(type, null); // Null visibleTo means Public
+      await createAlert(type, null);
   };
 
   const toggleGhost = async () => {
@@ -210,32 +182,21 @@ const Dashboard = () => {
 
   const createAlert = async (type, visibleTo) => {
       try {
-        // Clear existing
         if (myDocId) await deleteDoc(doc(db, "alerts", myDocId));
-
         const docRef = await addDoc(collection(db, "alerts"), {
             user: currentUser.email,
             userName: userProfile?.fullName || "Unknown",
             userPhone: userProfile?.phoneNumber || "",
-            type: type, 
-            visibleTo: visibleTo, // Array of UIDs for ghost, null for public
-            lat: location.lat,
-            lng: location.lng,
-            createdAt: serverTimestamp()
+            type: type, visibleTo: visibleTo, lat: location.lat, lng: location.lng, createdAt: serverTimestamp()
         });
         setMyDocId(docRef.id);
       } catch (e) { console.error(e); }
   };
 
-  const stopAlert = async () => {
-      if (myDocId) await deleteDoc(doc(db, "alerts", myDocId));
-  };
+  const stopAlert = async () => { if (myDocId) await deleteDoc(doc(db, "alerts", myDocId)); };
 
   const toggleMode = () => {
-      if (isAlerting || isGhosting) {
-          alert("CANNOT SWITCH MODES WHILE ACTIVE. STOP SIGNAL FIRST.");
-          return;
-      }
+      if (isAlerting || isGhosting) { alert("CANNOT SWITCH MODES WHILE ACTIVE."); return; }
       setMode(prev => prev === 'universal' ? 'ghost' : 'universal');
   };
 
@@ -244,50 +205,56 @@ const Dashboard = () => {
   if (isLoading) return <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono animate-pulse">CONNECTING...</div>;
 
   return (
-    <div className="h-screen w-screen relative bg-black transition-colors duration-500">
+    // Use h-[100dvh] for dynamic mobile viewport height
+    <div className="h-[100dvh] w-screen relative bg-black transition-colors duration-500 overflow-hidden">
       {showLogoutConfirm && <LogoutModal onConfirm={handleLogout} onCancel={() => setShowLogoutConfirm(false)} />}
       {showTypeModal && <EmergencyTypeModal onSelect={startRedAlert} onCancel={() => setShowTypeModal(false)} />}
 
       {/* --- HUD --- */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 flex justify-between pointer-events-none">
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-3 md:p-4 flex justify-between items-start pointer-events-none">
          
-         {/* STATUS BADGE */}
-         <div className={`backdrop-blur-md border px-4 py-2 rounded-lg pointer-events-auto flex items-center gap-3 transition-colors ${theme.bg} ${theme.border}`}>
+         {/* STATUS BADGE (Left) */}
+         <div className={`backdrop-blur-md border px-3 py-2 md:px-4 md:py-2 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${theme.bg} ${theme.border}`}>
             <div className={`w-2 h-2 rounded-full animate-pulse ${theme.pulse}`}></div>
-            <span className={`font-mono text-xs font-bold ${theme.color}`}>
-                {isAlerting ? 'BROADCASTING...' : (isGhosting ? 'SAFE WALK ACTIVE' : theme.statusText)}
+            {/* Smaller text on mobile */}
+            <span className={`font-mono text-[10px] md:text-xs font-bold ${theme.color}`}>
+                {isAlerting ? 'BROADCASTING...' : (isGhosting ? 'SAFE WALK' : theme.statusText)}
             </span>
          </div>
 
-         {/* CONTROLS */}
+         {/* CONTROLS (Right) - Tighter Grid on Mobile */}
          <div className="flex gap-2 pointer-events-auto">
             
-            {/* MODE TOGGLE SWITCH */}
+            {/* MODE TOGGLE */}
             <button 
                 onClick={toggleMode} 
-                className={`bg-gray-900/80 border w-12 h-10 flex items-center justify-center rounded-lg transition-colors ${theme.border} ${theme.color}`}
+                className={`bg-gray-900/90 border w-10 h-10 md:w-12 md:h-10 flex items-center justify-center rounded-lg transition-colors shadow-lg ${theme.border} ${theme.color}`}
             >
-                <Icon icon={mode === 'universal' ? "mdi:earth" : "mdi:ghost"} className="text-xl" />
+                <Icon icon={mode === 'universal' ? "mdi:earth" : "mdi:ghost"} className="text-lg md:text-xl" />
             </button>
 
-            <button onClick={() => navigate('/team')} className="bg-gray-900/50 hover:bg-green-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white">
-                <Icon icon="mdi:account-group" />
-            </button>
+            {/* NAV GROUP */}
+            <div className="flex gap-1 md:gap-2">
+                <button onClick={() => navigate('/team')} className="bg-gray-900/80 hover:bg-green-900/50 border border-white/10 w-9 h-10 md:w-10 flex items-center justify-center rounded-lg text-white transition-colors">
+                    <Icon icon="mdi:account-group" className="text-lg" />
+                </button>
 
-            <button onClick={() => navigate('/profile')} className="bg-gray-900/50 hover:bg-cyan-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white">
-                <Icon icon="mdi:cog" />
-            </button>
-            <button onClick={() => setShowLogoutConfirm(true)} className="bg-gray-900/50 hover:bg-red-900/50 border border-white/10 w-10 h-10 flex items-center justify-center rounded-lg text-white">
-                <Icon icon="mdi:logout" />
-            </button>
+                <button onClick={() => navigate('/profile')} className="bg-gray-900/80 hover:bg-cyan-900/50 border border-white/10 w-9 h-10 md:w-10 flex items-center justify-center rounded-lg text-white transition-colors">
+                    <Icon icon="mdi:cog" className="text-lg" />
+                </button>
+                
+                <button onClick={() => setShowLogoutConfirm(true)} className="bg-gray-900/80 hover:bg-red-900/50 border border-white/10 w-9 h-10 md:w-10 flex items-center justify-center rounded-lg text-white transition-colors">
+                    <Icon icon="mdi:logout" className="text-lg" />
+                </button>
+            </div>
          </div>
       </div>
 
       {notification && (
-        <div className="absolute top-24 left-1/2 transform -translate-x-1/2 z-[2000] w-full max-w-sm px-4 text-center">
-            <div className={`backdrop-blur-md text-white px-6 py-3 rounded-full font-mono font-bold border shadow-lg flex items-center justify-center gap-3 animate-pulse bg-gray-900/90 border-white`}>
+        <div className="absolute top-28 left-1/2 transform -translate-x-1/2 z-[2000] w-[90%] max-w-sm text-center pointer-events-none">
+            <div className={`backdrop-blur-md text-white px-4 py-2 rounded-full font-mono font-bold border shadow-lg flex items-center justify-center gap-2 animate-pulse bg-gray-900/90 border-white text-xs md:text-sm`}>
                 <Icon icon="mdi:alert" />
-                <span className="text-sm">{notification}</span>
+                <span>{notification}</span>
             </div>
         </div>
       )}
@@ -298,32 +265,22 @@ const Dashboard = () => {
         <MapController location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
         <ManualRecenterBtn location={location} isLocked={isMapLocked} setIsLocked={setIsMapLocked} />
 
-        {/* MY MARKER */}
         {location && (
             <Marker position={[location.lat, location.lng]} icon={(isAlerting || isGhosting) ? getIconByType(myAlertType) : DefaultIcon}>
-                <Popup>{isGhosting ? "You are visible to Team" : (isAlerting ? "BROADCASTING!" : "You are here")}</Popup>
+                <Popup>{isGhosting ? "Visible to Team" : "You are here"}</Popup>
             </Marker>
         )}
 
-        {/* OTHER MARKERS (FILTERED BY MODE) */}
         {alerts.map((alert) => {
             if (alert.user === currentUser?.email) return null;
-
-            // UNIVERSAL MODE: Show Red Alerts only (Hide Ghosts)
             if (mode === 'universal') {
                 if (alert.type === 'ghost') return null;
                 return (
                     <Marker key={alert.id} position={[alert.lat, alert.lng]} icon={getIconByType(alert.type)}>
-                        <Popup className="custom-popup">
-                             <strong className="text-red-600 font-mono">{alert.type} ALERT</strong><br/>
-                             {alert.userName}
-                        </Popup>
+                        <Popup className="custom-popup"><strong className="text-red-600 font-mono">{alert.type} ALERT</strong><br/>{alert.userName}</Popup>
                     </Marker>
                 );
-            } 
-            // GHOST MODE: Show Ghosts (if in roster) AND Red Alerts
-            else {
-                // If it's a ghost, check visibility
+            } else {
                 if (alert.type === 'ghost') {
                     if (!alert.visibleTo?.includes(currentUser.uid)) return null;
                     return (
@@ -332,7 +289,6 @@ const Dashboard = () => {
                         </Marker>
                     );
                 }
-                // Still show Red Alerts in Ghost Mode? Usually yes, for safety.
                 return (
                     <Marker key={alert.id} position={[alert.lat, alert.lng]} icon={getIconByType(alert.type)}>
                          <Popup><strong className="text-red-600">{alert.type}</strong></Popup>
@@ -342,15 +298,15 @@ const Dashboard = () => {
         })}
       </MapContainer>
 
-      {/* --- MAIN ACTION BUTTON (DYNAMIC) --- */}
-      <div className="absolute bottom-10 left-0 right-0 flex justify-center z-[1000]">
+      {/* --- MAIN ACTION BUTTON --- */}
+      <div className="absolute bottom-8 left-0 right-0 flex justify-center z-[1000] pb-safe">
         <button 
             onClick={handleMainButton} 
-            className={`group relative flex items-center justify-center w-24 h-24 rounded-full border-4 transition-all cursor-pointer ${isAlerting || isGhosting ? 'bg-white border-gray-300 scale-95' : `bg-gray-900 ${theme.buttonBorder} hover:scale-105 ${theme.buttonShadow}`}`}
+            className={`group relative flex items-center justify-center w-20 h-20 md:w-24 md:h-24 rounded-full border-4 transition-all cursor-pointer ${isAlerting || isGhosting ? 'bg-white border-gray-300 scale-95' : `bg-gray-900 ${theme.buttonBorder} hover:scale-105 ${theme.buttonShadow}`}`}
         >
             {isAlerting || isGhosting 
-                ? <Icon icon="mdi:stop" className={`text-4xl relative z-10 ${mode === 'ghost' ? 'text-cyan-600' : 'text-red-600'}`} /> 
-                : <Icon icon={mode === 'ghost' ? "mdi:eye" : "mdi:bell-ring"} className="text-4xl text-white relative z-10" />
+                ? <Icon icon="mdi:stop" className={`text-3xl md:text-4xl relative z-10 ${mode === 'ghost' ? 'text-cyan-600' : 'text-red-600'}`} /> 
+                : <Icon icon={mode === 'ghost' ? "mdi:eye" : "mdi:bell-ring"} className="text-3xl md:text-4xl text-white relative z-10" />
             }
             {(isAlerting || isGhosting) && <div className={`absolute inset-0 rounded-full animate-ping border-2 ${mode === 'ghost' ? 'border-cyan-500' : 'border-red-500'}`}></div>}
         </button>
